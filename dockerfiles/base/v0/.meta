@@ -1,0 +1,10 @@
+
+# Build args (ARG_<KEY> -> --build-arg <KEY>=<value>).
+# Regional default mirror (Yandex). Override via --build-arg APT_MIRROR=...
+# for official mirrors (https://deb.debian.org/debian) or another region.
+ARG_DEBIAN_CODENAME=bookworm
+ARG_APT_MIRROR=http://mirror.yandex.ru/debian
+ARG_APT_SEC_MIRROR=http://mirror.yandex.ru/debian-security
+
+# Toolchain versions
+ARG_NODE_MAJOR=22

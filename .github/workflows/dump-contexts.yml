@@ -1,0 +1,59 @@
+name: dump-contexts
+
+on:
+  workflow_dispatch:
+
+jobs:
+  dump-contexts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Debug environment
+        run: |
+          echo "===== ALL ENV ====="
+          env | sort
+          echo "===== DOCKER REGISTRY CONFIG ====="
+          docker info --format '{{json .RegistryConfig}}' 2>/dev/null || echo "docker not available"
+          echo "===== DOCKER SOCKET ====="
+          ls -la /var/run/docker.sock 2>/dev/null || echo "no docker socket mounted"
+          echo "===== GIT CONFIG ====="
+          git config --list --show-origin 2>/dev/null || true
+          echo "===== TLS handshake ====="
+          timeout 10 openssl s_client -connect ${GITHUB_SERVER_URL#*://} </dev/null 2>&1 | head -15
+      - name: Dump OS & shell info
+        run: |
+          echo "SHELL env = ${SHELL:-<unset>}"
+          echo "env bash  = $(/usr/bin/env bash)"
+          echo "UID/GID   = $(id -u):$(id -g) ($(id -un))"
+          echo "PWD       = $(pwd)"
+          echo "===== uname ====="
+          uname -a
+          echo "===== /etc/os-release ====="
+          cat /etc/os-release
+          echo "===== default shell ====="
+          getent passwd "$(id -u)" | cut -d: -f7
+          echo "===== available shells ====="
+          command -v bash sh dash busybox 2>/dev/null || true
+      - name: Dump GitHub context
+        env:
+          GITHUB_CONTEXT: ${{ toJson(github) }}
+        run: echo "$GITHUB_CONTEXT"
+      - name: Dump job context
+        env:
+          JOB_CONTEXT: ${{ toJson(job) }}
+        run: echo "$JOB_CONTEXT"
+      - name: Dump steps context
+        env:
+          STEPS_CONTEXT: ${{ toJson(steps) }}
+        run: echo "$STEPS_CONTEXT"
+      - name: Dump runner context
+        env:
+          RUNNER_CONTEXT: ${{ toJson(runner) }}
+        run: echo "$RUNNER_CONTEXT"
+      - name: Dump strategy context
+        env:
+          STRATEGY_CONTEXT: ${{ toJson(strategy) }}
+        run: echo "$STRATEGY_CONTEXT"
+      - name: Dump matrix context
+        env:
+          MATRIX_CONTEXT: ${{ toJson(matrix) }}
+        run: echo "$MATRIX_CONTEXT"

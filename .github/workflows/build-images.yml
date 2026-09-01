@@ -1,0 +1,82 @@
+name: build-images
+
+on:
+  workflow_dispatch:
+    inputs:
+      push:
+        description: "Publish images to the registry (otherwise build-only validation)"
+        required: false
+        type: boolean
+        default: true
+      push_latest:
+        description: "Also update the :latest tag"
+        required: false
+        type: boolean
+        default: false
+      overwrite:
+        description: "Allow overwriting an already existing version in the registry"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine Options
+        id: vars
+        run: |
+          set -euo pipefail
+          case "${GITHUB_EVENT_NAME}" in
+            push)
+              do_push="true"
+              push_latest="false"
+              overwrite="false"
+              ;;
+            workflow_dispatch)
+              do_push="${{ inputs.push }}"
+              push_latest="${{ inputs.push_latest }}"
+              overwrite="${{ inputs.overwrite }}"
+              ;;
+            *)
+              do_push="false"
+              push_latest="false"
+              overwrite="false"
+              ;;
+          esac
+          v="do_push=${do_push}"          && echo "$v" && echo "$v" >> "$GITHUB_OUTPUT"
+          v="push_latest=${push_latest}"  && echo "$v" && echo "$v" >> "$GITHUB_OUTPUT"
+          v="overwrite=${overwrite}"      && echo "$v" && echo "$v" >> "$GITHUB_OUTPUT"
+
+      - name: Build images (build-only)
+        if: steps.vars.outputs.do_push != 'true'
+        run: |
+          make build \
+            OCI_SOURCE="${{ github.server_url }}/${{ github.repository }}" \
+            OCI_REVISION="${{ github.sha }}"
+
+      - name: Log in to Container Registry
+        if: steps.vars.outputs.do_push == 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ vars.REGISTRY }}
+          username: ${{ vars.REGISTRY_USER }}
+          password: ${{ secrets.REGISTRY_TOKEN }}
+
+      - name: Build & push images
+        if: steps.vars.outputs.do_push == 'true'
+        run: |
+          make release \
+            REGISTRY="${{ vars.REGISTRY }}" NAMESPACE="${{ github.repository }}" \
+            PUSH_LATEST="${{ steps.vars.outputs.push_latest }}" \
+            ALLOW_OVERWRITE="${{ steps.vars.outputs.overwrite }}" \
+            OCI_SOURCE="${{ github.server_url }}/${{ github.repository }}" \
+            OCI_REVISION="${{ github.sha }}"
