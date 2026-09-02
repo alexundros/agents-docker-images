@@ -24,12 +24,12 @@ REMOTE_PREFIX := $(REGISTRY)/$(NAMESPACE)/
 endif
 
 # Discovery (recursive; make 3.81-compatible via find)
-# Absolute-ish paths of every versioned Dockerfile.
-# -mindepth 3 guarantees at least <name>/<version>/Dockerfile under $(DF_DIR).
-DF_PATHS := $(sort $(shell $(FIND) $(DF_DIR) -mindepth 3 -type f -name 'Dockerfile' 2>/dev/null))
+# Absolute-ish paths of every versioned .meta.
+# -mindepth 3 guarantees at least <name>/<version>/.meta under $(DF_DIR).
+META_PATHS := $(sort $(shell $(FIND) $(DF_DIR) -mindepth 3 -type f -name '.meta' 2>/dev/null))
 
-# IDs = paths relative to $(DF_DIR), without the Dockerfile filename.
-IDS := $(patsubst $(DF_DIR)/%/Dockerfile,%,$(DF_PATHS))
+# IDs = paths relative to $(DF_DIR), without the .meta filename.
+IDS := $(patsubst $(DF_DIR)/%/.meta,%,$(META_PATHS))
 
 # Per-ID accessors (string ops only; safe at parse time)
 # ID = <key>/<version>  (version is the last path component)
@@ -37,7 +37,9 @@ id_version = $(notdir $(1))
 id_key     = $(patsubst %/,%,$(dir $(1)))
 id_name    = $(notdir $(call id_key,$(1)))
 
-dockerfile_path = $(DF_DIR)/$(1)/Dockerfile
+# Dockerfile path: meta DOCKERFILE (relative to $(DF_DIR)) if set,
+# otherwise the conventional <ID>/Dockerfile.
+dockerfile_path = $(DF_DIR)/$(or $(call meta_get,$(1),DOCKERFILE),$(1)/Dockerfile)
 meta_path       = $(DF_DIR)/$(1)/.meta
 
 # Read scalar KEY from <ID>/.meta (stripped, first match, inline '#' removed).
@@ -103,22 +105,29 @@ validate: ## Validate layout, duplicate image names and PARENT refs
 		else seen_name[$$suffix]="$$key"; seen_id[$$suffix]="$$id"; fi; \
 	done; \
 	for id in $(IDS); do \
+		dfp="$$($(MAKE) -s _dockerfile ID=$$id)"; \
+		if [ ! -f "$$dfp" ]; then \
+			echo "ERROR: '$$id' has no Dockerfile '$$dfp' (set DOCKERFILE= in .meta)"; err=1; \
+		fi; \
 		p="$$($(MAKE) -s _parent-of ID=$$id)"; \
 		[ -z "$$p" ] && continue; \
 		case "$$p" in */*) ;; *) \
 			echo "ERROR: PARENT='$$p' in '$$id/.meta' must be '<key>/<version>'"; err=1; continue;; \
 		esac; \
-		if [ ! -f "$(DF_DIR)/$$p/Dockerfile" ]; then \
-			echo "ERROR: PARENT '$$p' (from '$$id') has no $(DF_DIR)/$$p/Dockerfile"; err=1; \
+		pdfp="$$($(MAKE) -s _dockerfile ID=$$p)"; \
+		if [ ! -f "$$pdfp" ]; then \
+			echo "ERROR: PARENT '$$p' (from '$$id') has no Dockerfile '$$pdfp'"; err=1; \
 		fi; \
 	done; \
 	if [ "$$err" = "0" ]; then echo "validate: OK ($(words $(IDS)) image(s))"; else exit 1; fi
 
-.PHONY: _img-suffix _parent-of
+.PHONY: _img-suffix _parent-of _dockerfile
 _img-suffix:
 	@printf '%s\n' "$(call img_suffix,$(ID))"
 _parent-of:
 	@printf '%s\n' "$(call parent_of,$(ID))"
+_dockerfile:
+	@printf '%s\n' "$(call dockerfile_path,$(ID))"
 
 .PHONY: _ids _parents
 _ids:

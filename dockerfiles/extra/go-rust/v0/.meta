@@ -1,0 +1,6 @@
+
+DOCKERFILE=default/rust/v0/Dockerfile
+PARENT=default/go/v0
+
+# Toolchain versions
+ARG_RUST_VER=stable
