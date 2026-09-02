@@ -15,7 +15,8 @@ RUN set -eux; \
   url="https://go.dev/dl/go${GO_VER}.linux-${g_arch}.tar.gz"; \
   curl -fsSL "${url}" -o /tmp/go.tar.gz; rm -rf /usr/local/go; \
   tar -C /usr/local -xzf /tmp/go.tar.gz; rm -f /tmp/go.tar.gz; \
-  /usr/local/go/bin/go version
+  /usr/local/go/bin/go version; \
+  rm -rf /usr/local/go/test /usr/local/go/doc /usr/local/go/misc
 
 USER coder
 ENV GOPATH=/home/coder/go \

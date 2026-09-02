@@ -3,3 +3,4 @@ PARENT=go-rust/v0
 
 # Toolchain versions
 ARG_ZIG_VER=0.14.0
+ARG_ZIGBUILD_VER=0.23.3

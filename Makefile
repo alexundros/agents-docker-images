@@ -12,7 +12,7 @@ IMAGE_PREFIX    ?=
 OCI_SOURCE      ?=
 OCI_REVISION    ?= local
 REGISTRY        ?=
-NAMESPACE       ?= $(notdir $(CURDIR))
+NAMESPACE       ?=
 PUSH_LATEST     ?= false
 ALLOW_OVERWRITE ?= false
 
@@ -52,7 +52,7 @@ img_name   = $(IMAGE_PREFIX)$(call img_suffix,$(1))
 
 # Refs. Remote refs are used only when REGISTRY+NAMESPACE are set
 # (REMOTE_PREFIX non-empty); otherwise images are tagged locally.
-local_ref  = $(call img_name,$(1)):$(call id_version,$(1))
+local_ref  = $(notdir $(CURDIR))/$(call img_name,$(1)):$(call id_version,$(1))
 remote_ref = $(REMOTE_PREFIX)$(call img_name,$(1)):$(call id_version,$(1))
 latest_ref = $(REMOTE_PREFIX)$(call img_name,$(1)):latest
 

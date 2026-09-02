@@ -23,8 +23,8 @@ RUN set -eux; \
   apt-get install -y --no-install-recommends \
   # TLS / apt transport
   apt-transport-https ca-certificates gnupg \
-  # Build toolchain & shell
-  build-essential bash \
+  # Shell
+  bash \
   # VCS & downloaders
   curl wget git \
   # Archivers

@@ -37,5 +37,16 @@ RUN set -eux; \
 
 USER coder
 
-# cargo-zigbuild
-RUN set -eux; cargo install cargo-zigbuild;
+# cargo-zigbuild (prebuilt release binary)
+ARG ZIGBUILD_VER=0.23.3
+RUN set -eux; \
+  arch="$(dpkg --print-architecture)"; \
+  case "${arch}" in \
+  amd64) zb_arch=x86_64 ;; \
+  arm64) zb_arch=aarch64 ;; \
+  *) echo "unsupported architecture: ${arch}" >&2; exit 1 ;; \
+  esac; \
+  curl -fsSL "https://github.com/rust-cross/cargo-zigbuild/releases/download/v${ZIGBUILD_VER}/cargo-zigbuild-${zb_arch}-unknown-linux-gnu.tar.xz" \
+    -o /tmp/czb.tar.xz; \
+  tar -C /home/coder/.cargo/bin -xJf /tmp/czb.tar.xz; \
+  rm -f /tmp/czb.tar.xz

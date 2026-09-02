@@ -7,6 +7,8 @@ USER root
 RUN set -eux; \
   apt-get update; \
   apt-get install -y --no-install-recommends \
+  # C toolchain (compilers) for rust builds
+  build-essential \
   # Linux musl (x86_64-unknown-linux-musl) linker
   musl-tools \
   # Required to unpack the zig tarball (.tar.xz)
@@ -23,4 +25,5 @@ ARG RUST_VER=stable
 RUN set -eux; \
   curl -fsSL https://sh.rustup.rs -o /tmp/rustup-init.sh; \
   sh /tmp/rustup-init.sh -v -y --no-modify-path --default-toolchain "${RUST_VER}" --profile minimal \
-  -t "add x86_64-unknown-linux-gnu,x86_64-unknown-linux-musl";
+  -t "add x86_64-unknown-linux-gnu,x86_64-unknown-linux-musl"; \
+  rm -rf /home/coder/.rustup/tmp
