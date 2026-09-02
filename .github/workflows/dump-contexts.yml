@@ -17,8 +17,6 @@ jobs:
           ls -la /var/run/docker.sock 2>/dev/null || echo "no docker socket mounted"
           echo "===== GIT CONFIG ====="
           git config --list --show-origin 2>/dev/null || true
-          echo "===== TLS handshake ====="
-          timeout 10 openssl s_client -connect ${GITHUB_SERVER_URL#*://} </dev/null 2>&1 | head -15
       - name: Dump OS & shell info
         run: |
           echo "SHELL env = ${SHELL:-<unset>}"

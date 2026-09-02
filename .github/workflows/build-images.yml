@@ -1,10 +1,15 @@
 name: build-images
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - "dockerfiles/**"
   workflow_dispatch:
     inputs:
       push:
-        description: "Publish images to the registry (otherwise build-only validation)"
+        description: "Publish images to the registry (otherwise build-only)"
         required: false
         type: boolean
         default: true
@@ -13,8 +18,8 @@ on:
         required: false
         type: boolean
         default: false
-      overwrite:
-        description: "Allow overwriting an already existing version in the registry"
+      force_rebuild:
+        description: "Rebuild ALL images even if already published"
         required: false
         type: boolean
         default: false
@@ -30,38 +35,102 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Determine Options
         id: vars
         run: |
           set -euo pipefail
+          do_push="false"
+          push_latest="false"
+          force_rebuild="false"
           case "${GITHUB_EVENT_NAME}" in
             push)
               do_push="true"
-              push_latest="false"
-              overwrite="false"
               ;;
             workflow_dispatch)
               do_push="${{ inputs.push }}"
               push_latest="${{ inputs.push_latest }}"
-              overwrite="${{ inputs.overwrite }}"
-              ;;
-            *)
-              do_push="false"
-              push_latest="false"
-              overwrite="false"
+              force_rebuild="${{ inputs.force_rebuild }}"
               ;;
           esac
-          v="do_push=${do_push}"          && echo "$v" && echo "$v" >> "$GITHUB_OUTPUT"
-          v="push_latest=${push_latest}"  && echo "$v" && echo "$v" >> "$GITHUB_OUTPUT"
-          v="overwrite=${overwrite}"      && echo "$v" && echo "$v" >> "$GITHUB_OUTPUT"
+          v="do_push=${do_push}"              && echo "$v" && echo "$v" >> "$GITHUB_OUTPUT"
+          v="push_latest=${push_latest}"      && echo "$v" && echo "$v" >> "$GITHUB_OUTPUT"
+          v="force_rebuild=${force_rebuild}"  && echo "$v" && echo "$v" >> "$GITHUB_OUTPUT"
+
+      - name: Detect changed images
+        id: changed
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" != "push" ]; then
+            echo "mode=all"
+            echo "mode=all" >> "$GITHUB_OUTPUT"
+            echo "ids="     >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          mapfile -t all < <(make -s _ids)
+          in_all() {
+            for a in "${all[@]}"; do [ "$a" = "$1" ] && return 0; done
+            return 1
+          }
+          base="${{ github.event.before }}"
+          if [ "$base" = "0000000000000000000000000000000000000000" ]; then
+            changed=("${all[@]}")
+          else
+            changed=()
+            while read -r f; do
+              case "$f" in
+                dockerfiles/*)
+                  id="${f#dockerfiles/}"
+                  changed+=("${id%/*}")
+                  ;;
+              esac
+            done < <(git diff --name-only "$base" "${{ github.sha }}" -- dockerfiles/)
+          fi
+          declare -A want parent
+          for id in "${changed[@]}"; do in_all "$id" && want["$id"]=1; done
+          while read -r id p; do parent["$id"]="$p"; done < <(make -s _parents)
+          progress=1
+          while [ "$progress" = "1" ]; do
+            progress=0
+            for id in "${all[@]}"; do
+              p="${parent[$id]:-}"
+              if [ -n "$p" ] && [ -n "${want[$p]:-}" ] && [ -z "${want[$id]:-}" ]; then
+                want["$id"]=1
+                progress=1
+              fi
+            done
+          done
+          printf '%s\n' "${!want[@]}" | sort -u > /tmp/changed-ids.txt
+          if [ -s /tmp/changed-ids.txt ]; then
+            ids="$(paste -sd, /tmp/changed-ids.txt)"
+            echo "Changed images: $(tr ',' ' ' <<< "$ids")"
+          else
+            ids=""
+            echo "No images changed"
+          fi
+          echo "mode=changed" >> "$GITHUB_OUTPUT"
+          echo "ids=${ids}"   >> "$GITHUB_OUTPUT"
+
+      - name: Validate
+        run: make validate
 
       - name: Build images (build-only)
         if: steps.vars.outputs.do_push != 'true'
         run: |
-          make build \
-            OCI_SOURCE="${{ github.server_url }}/${{ github.repository }}" \
-            OCI_REVISION="${{ github.sha }}"
+          set -euo pipefail
+          if [ "${{ steps.changed.outputs.mode }}" = "changed" ]; then
+            mapfile -t ids < <(printf '%s\n' "${{ steps.changed.outputs.ids }}" | tr ',' '\n')
+            [ ${#ids[@]} -eq 0 ] && { echo "Nothing to build"; exit 0; }
+            make $(printf ' build-%s' "${ids[@]}") \
+              OCI_SOURCE="${{ github.server_url }}/${{ github.repository }}" \
+              OCI_REVISION="${{ github.sha }}"
+          else
+            make build \
+              OCI_SOURCE="${{ github.server_url }}/${{ github.repository }}" \
+              OCI_REVISION="${{ github.sha }}"
+          fi
 
       - name: Log in to Container Registry
         if: steps.vars.outputs.do_push == 'true'
@@ -74,9 +143,21 @@ jobs:
       - name: Build & push images
         if: steps.vars.outputs.do_push == 'true'
         run: |
-          make release \
-            REGISTRY="${{ vars.REGISTRY }}" NAMESPACE="${{ github.repository }}" \
-            PUSH_LATEST="${{ steps.vars.outputs.push_latest }}" \
-            ALLOW_OVERWRITE="${{ steps.vars.outputs.overwrite }}" \
-            OCI_SOURCE="${{ github.server_url }}/${{ github.repository }}" \
-            OCI_REVISION="${{ github.sha }}"
+          set -euo pipefail
+          if [ "${{ steps.changed.outputs.mode }}" = "changed" ]; then
+            mapfile -t ids < <(printf '%s\n' "${{ steps.changed.outputs.ids }}" | tr ',' '\n')
+            [ ${#ids[@]} -eq 0 ] && { echo "Nothing to push"; exit 0; }
+            make $(printf ' release-%s' "${ids[@]}") \
+              REGISTRY="${{ vars.REGISTRY }}" NAMESPACE="${{ github.repository }}" \
+              PUSH_LATEST="${{ steps.vars.outputs.push_latest }}" \
+              ALLOW_OVERWRITE="${{ steps.vars.outputs.force_rebuild }}" \
+              OCI_SOURCE="${{ github.server_url }}/${{ github.repository }}" \
+              OCI_REVISION="${{ github.sha }}"
+          else
+            make release \
+              REGISTRY="${{ vars.REGISTRY }}" NAMESPACE="${{ github.repository }}" \
+              PUSH_LATEST="${{ steps.vars.outputs.push_latest }}" \
+              ALLOW_OVERWRITE="${{ steps.vars.outputs.force_rebuild }}" \
+              OCI_SOURCE="${{ github.server_url }}/${{ github.repository }}" \
+              OCI_REVISION="${{ github.sha }}"
+          fi

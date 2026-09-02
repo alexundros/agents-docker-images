@@ -1,24 +1,23 @@
 ARG BASE_IMAGE=debian:12-slim
 FROM ${BASE_IMAGE}
 
-# Default to official Debian mirrors
-ARG APT_MIRROR=https://deb.debian.org/debian
-ARG APT_SEC_MIRROR=https://deb.debian.org/debian-security
-
 ENV DEBIAN_FRONTEND=noninteractive \
   PIP_NO_CACHE_DIR=1 \
   PIP_DISABLE_PIP_VERSION_CHECK=1
 
-LABEL org.opencontainers.image.title="AI tools images" \
-  org.opencontainers.image.description="Base layer with common tooling for AI tools images"
+LABEL org.opencontainers.image.title="AI tools images"
+LABEL org.opencontainers.image.description="Base layer with common tooling for AI tools images"
+
+# Default to official Debian mirrors
+ARG APT_MIRROR=https://deb.debian.org/debian
+ARG APT_SEC_MIRROR=https://deb.debian.org/debian-security
 
 # APT sources + base packages
-ARG DEBIAN_CODENAME=bookworm
 RUN set -eux; \
   { \
-  echo "deb ${APT_MIRROR} ${DEBIAN_CODENAME} main contrib non-free"; \
-  echo "deb ${APT_MIRROR} ${DEBIAN_CODENAME}-updates main contrib non-free"; \
-  echo "deb ${APT_SEC_MIRROR} ${DEBIAN_CODENAME}-security main contrib non-free"; \
+  echo "deb ${APT_MIRROR} bookworm main contrib non-free"; \
+  echo "deb ${APT_MIRROR} bookworm-updates main contrib non-free"; \
+  echo "deb ${APT_SEC_MIRROR} bookworm-security main contrib non-free"; \
   } > /etc/apt/sources.list; \
   apt-get update; \
   apt-get install -y --no-install-recommends \
@@ -49,9 +48,9 @@ RUN set -eux; \
 COPY --chmod=755 assets/info-banner.sh /usr/local/bin/info-banner.sh
 
 # Node.js (NodeSource, current LTS)
-ARG NODE_MAJOR=22
+ARG NODE_VER=22
 RUN set -eux; \
-  curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash -; \
+  curl -fsSL "https://deb.nodesource.com/setup_${NODE_VER}.x" | bash -; \
   apt-get install -y --no-install-recommends nodejs; apt-get clean; \
   rm -rf /var/lib/apt/lists/*; node --version; npm --version
 

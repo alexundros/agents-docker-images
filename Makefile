@@ -16,10 +16,8 @@ NAMESPACE       ?= $(notdir $(CURDIR))
 PUSH_LATEST     ?= false
 ALLOW_OVERWRITE ?= false
 
-# Remote prefix "<registry>/<namespace>/"
-ifeq ($(strip $(REGISTRY)),)
-REMOTE_PREFIX := $(NAMESPACE)/
-else ifeq ($(strip $(NAMESPACE)),)
+# Remote prefix "<registry>/<namespace>/"; empty unless both are set.
+ifeq ($(and $(strip $(REGISTRY)),$(strip $(NAMESPACE))),)
 REMOTE_PREFIX :=
 else
 REMOTE_PREFIX := $(REGISTRY)/$(NAMESPACE)/
@@ -52,16 +50,16 @@ meta_get = $(strip $(shell test -f '$(call meta_path,$(1))' && \
 img_suffix = $(strip $(or $(call meta_get,$(1),IMAGE),$(call id_name,$(1))))
 img_name   = $(IMAGE_PREFIX)$(call img_suffix,$(1))
 
-# Refs. Images are tagged with their final remote name during build;
-# local_ref is only a fallback when REGISTRY/NAMESPACE are not set.
+# Refs. Remote refs are used only when REGISTRY+NAMESPACE are set
+# (REMOTE_PREFIX non-empty); otherwise images are tagged locally.
 local_ref  = $(call img_name,$(1)):$(call id_version,$(1))
 remote_ref = $(REMOTE_PREFIX)$(call img_name,$(1)):$(call id_version,$(1))
 latest_ref = $(REMOTE_PREFIX)$(call img_name,$(1)):latest
 
-# Tag used for the built image: remote when a registry is set, else local.
+# Tag used for the built image: remote when REMOTE_PREFIX is set, else local.
 artifact_ref = $(if $(strip $(REMOTE_PREFIX)),$(call remote_ref,$(1)),$(call local_ref,$(1)))
 
-# Parent base image: remote ref when a registry is set, else local.
+# Parent base image: remote ref when REMOTE_PREFIX is set, else local.
 parent_base = $(if $(strip $(REMOTE_PREFIX)),$(call remote_ref,$(1)),$(call local_ref,$(1)))
 
 # Extra build args from ARG_* lines.
@@ -91,15 +89,10 @@ help: ## Show available targets
 .PHONY: validate
 validate: ## Validate layout, duplicate image names and PARENT refs
 	@err=0; \
-	declare -A seen_name; \
-	declare -A seen_id; \
+	declare -A seen_name; declare -A seen_id; \
 	for id in $(IDS); do \
-		case "$$id" in \
-			*/*) ;; \
-			*) echo "ERROR: invalid layout '$$id'"; err=1; continue;; \
-		esac; \
-		key="$${id%/*}"; \
-		ver="$${id##*/}"; \
+		case "$$id" in */*) ;; *) echo "ERROR: invalid layout '$$id'"; err=1; continue;; esac; \
+		key="$${id%/*}"; ver="$${id##*/}"; \
 		if [ -z "$$ver" ] || [ "$$key" = "$$id" ]; then \
 			echo "ERROR: missing version in '$$id'"; err=1; continue; \
 		fi; \
@@ -107,10 +100,7 @@ validate: ## Validate layout, duplicate image names and PARENT refs
 		if [ -n "$${seen_name[$$suffix]:-}" ] && [ "$${seen_name[$$suffix]}" != "$$key" ]; then \
 			echo "ERROR: duplicate image name '$$suffix' from '$$id' and '$${seen_id[$$suffix]}'."; \
 			echo "       Set a distinct IMAGE= in one of their .meta files."; err=1; \
-		else \
-			seen_name[$$suffix]="$$key"; \
-			seen_id[$$suffix]="$$id"; \
-		fi; \
+		else seen_name[$$suffix]="$$key"; seen_id[$$suffix]="$$id"; fi; \
 	done; \
 	for id in $(IDS); do \
 		p="$$($(MAKE) -s _parent-of ID=$$id)"; \
@@ -129,6 +119,18 @@ _img-suffix:
 	@printf '%s\n' "$(call img_suffix,$(ID))"
 _parent-of:
 	@printf '%s\n' "$(call parent_of,$(ID))"
+
+.PHONY: _ids _parents
+_ids:
+	@printf '%s\n' $(IDS)
+
+# Print "<id> <parent>" for every ID (parent empty when none). Used by CI
+# to compute the set of images to rebuild from changed files.
+_parents:
+	@for id in $(IDS); do \
+		p="$$($(MAKE) -s _parent-of ID=$$id)"; \
+		printf '%s %s\n' "$$id" "$$p"; \
+	done
 
 .PHONY: images
 images: ## List discovered images: <ID> -> <image>:<version> [parent]
@@ -159,14 +161,12 @@ all: build ## Alias for build
 build: validate $(addprefix build-,$(IDS)) ## Build all images
 
 # Per-ID build rule (depends on parent ID when PARENT is set).
+# Thin wrapper; actual work is in the plain helper target `_build-one`
+# (shell variables must NOT live in an $(eval)-expanded define).
 define BUILD_RULE
 .PHONY: build-$(1)
 build-$(1): $$(if $$(call parent_of,$(1)),build-$$(call parent_of,$(1))) ## Build $(1)
-	docker build -f "$$(call dockerfile_path,$(1))" \
-		$$(if $$(call parent_of,$(1)),--build-arg BASE_IMAGE="$$(call parent_base,$$(call parent_of,$(1)))") \
-		$$(call img_args,$(1)) $$(call oci_labels,$(1)) -t "$$(call artifact_ref,$(1))" \
-		$$(if $$(and $$(strip $(REMOTE_PREFIX)),$$(filter true,$$(PUSH_LATEST))),-t "$$(call latest_ref,$(1))") \
-		"$$(BUILD_CONTEXT)"
+	@$(MAKE) -s _build-one ID=$(1)
 endef
 $(foreach id,$(IDS),$(eval $(call BUILD_RULE,$(id))))
 
@@ -178,57 +178,121 @@ endef
 # Only emit aggregate if the KEY differs from any single ID (avoid target clash).
 $(foreach key,$(filter-out $(IDS),$(KEYS)),$(eval $(call KEY_RULE,$(key))))
 
-# ============================================================
-# Registry check (overwrite protection)
-# ============================================================
-.PHONY: check-remote
-check-remote: require-remote ## Check :VERSION tags (ALLOW_OVERWRITE=true disables guard)
-	@export DOCKER_CLI_EXPERIMENTAL=enabled; \
-	exists=0; \
-	for id in $(IDS); do \
-		ref="$$($(MAKE) -s _remote-ref ID=$$id)"; \
-		if docker manifest inspect "$$ref" >/dev/null 2>&1; then \
-			echo "FOUND: $$ref already exists"; exists=1; \
-		else \
-			echo "OK:    $$ref is free"; \
-		fi; \
-	done; \
-	if [ "$$exists" = "1" ]; then \
-		if [ "$(ALLOW_OVERWRITE)" = "true" ]; then \
-			echo "WARNING: ALLOW_OVERWRITE=true - existing tags will be overwritten"; \
-		else \
-			echo "ERROR: some versions are already published. \
-				Bump versions or pass ALLOW_OVERWRITE=true."; \
-			exit 1; \
-		fi; \
+# Per-ID build helper. Existing remote versions are skipped unless
+# ALLOW_OVERWRITE=true; probe errors are fail-closed. No registry probe
+# when REMOTE_PREFIX is empty (local build-only mode).
+.PHONY: _build-one
+_build-one:
+	@skip=0; \
+	if [ "$(ALLOW_OVERWRITE)" != "true" ] && [ -n "$(REMOTE_PREFIX)" ]; then \
+		st="$$($(MAKE) -s _exists ID=$(ID))"; \
+		case "$$st" in \
+			yes) echo "SKIP: $(call remote_ref,$(ID)) already published"; skip=1;; \
+			error) exit 1;; \
+			no) ;; *) echo "ERROR: unexpected _exists result '$$st'" >&2; exit 1;; \
+		esac; \
+	fi; \
+	if [ "$$skip" = "0" ]; then \
+		docker build -f "$(call dockerfile_path,$(ID))" \
+			$(if $(call parent_of,$(ID)),--build-arg BASE_IMAGE="$(call parent_base,$(call parent_of,$(ID)))") \
+			$(call img_args,$(ID)) $(call oci_labels,$(ID)) -t "$(call artifact_ref,$(ID))" \
+			$(if $(and $(strip $(REMOTE_PREFIX)),$(filter true,$(PUSH_LATEST))),-t "$(call latest_ref,$(ID))") \
+			"$(BUILD_CONTEXT)"; \
 	fi
 
-.PHONY: _remote-ref
+# ============================================================
+# Existence probe
+# ============================================================
+.PHONY: _remote-ref _exists
 _remote-ref:
 	@printf '%s\n' "$(call remote_ref,$(ID))"
+
+# Prints yes/no/error on stdout; informative lines on stderr.
+_exists:
+	@if [ -z "$(REMOTE_PREFIX)" ]; then echo no; exit 0; fi; \
+	ref="$(call remote_ref,$(ID))"; \
+	out="$$(docker manifest inspect "$$ref" 2>&1)"; rc=$$?; \
+	if [ "$$rc" = "0" ]; then \
+		echo "FOUND: $$ref already exists" >&2; echo yes; \
+	elif case "$$out" in *"no such manifest"*|*"manifest unknown"*|*"not found"*|*"404"*) true;; \
+						 *) false;; esac; then echo "OK:    $$ref is free" >&2; echo no; \
+	else \
+		case "$$out" in \
+			*"unauthorized"*|*"authentication required"*|*"denied"*|*"permission denied"*) \
+				echo "ERROR: $$ref - registry needs auth (run 'make login' first)" >&2;; \
+			*"certificate"*|*"x509"*|*"tls"*|*"unknown authority"*) \
+				echo "ERROR: $$ref - TLS check failed for docker CLI" >&2;; \
+			*) echo "ERROR: $$ref - manifest inspect failed: $$out" >&2;; \
+		esac; \
+		echo error; \
+	fi
 
 # ============================================================
 # Publishing
 # ============================================================
 .PHONY: login
-login: ## Log in to the registry (REGISTRY, REGISTRY_USER, REGISTRY_TOKEN)
-	@if [ -z "$(REGISTRY)" ]; then echo "ERROR: set REGISTRY"; exit 1; fi; \
-	echo "$(REGISTRY_TOKEN)" | docker login "$(REGISTRY)" -u "$(REGISTRY_USER)" \
-	--password-stdin
+login: ## Log in to the registry (no-op if REGISTRY is empty)
+	@if [ -z "$(REGISTRY)" ]; then echo "SKIP login: REGISTRY is not set"; \
+	else \
+		echo "$(REGISTRY_TOKEN)" | docker login "$(REGISTRY)" -u "$(REGISTRY_USER)" \
+		--password-stdin; \
+	fi
 
 .PHONY: push
-push: require-remote check-remote ## Push images (PUSH_LATEST, ALLOW_OVERWRITE)
+push: require-remote ## Push images (existing skipped unless ALLOW_OVERWRITE=true)
 	@for id in $(IDS); do $(MAKE) -s _push-one ID=$$id; done
 
 .PHONY: _push-one
 _push-one:
-	@docker push "$(call remote_ref,$(ID))"; \
-	if [ "$(PUSH_LATEST)" = "true" ]; then \
-		docker push "$(call latest_ref,$(ID))"; \
-	fi
+	@if [ "$(ALLOW_OVERWRITE)" != "true" ] && [ -n "$(REMOTE_PREFIX)" ]; then \
+		st="$$($(MAKE) -s _exists ID=$(ID))"; \
+		case "$$st" in \
+			yes) echo "SKIP push: $(call remote_ref,$(ID)) already exists"; exit 0;; \
+			error) exit 1;; \
+			no) ;; *) echo "ERROR: unexpected _exists result '$$st'" >&2; exit 1;; \
+		esac; \
+	fi; \
+	docker push "$(call remote_ref,$(ID))"; \
+	if [ "$(PUSH_LATEST)" = "true" ]; then docker push "$(call latest_ref,$(ID))"; fi
 
+# ============================================================
+# Release (per-ID build + push, one existence probe total)
+# ============================================================
 .PHONY: release
-release: build push ## Full cycle: build + push
+release: validate require-remote $(addprefix release-,$(IDS)) ## Build + push
+
+# Per-ID release rule: probe once, then build+push or skip.
+# Thin wrapper; actual work is in the plain helper target `_release-one`.
+define RELEASE_RULE
+.PHONY: release-$(1)
+release-$(1): $$(if $$(call parent_of,$(1)),release-$$(call parent_of,$(1))) require-remote ## Build + push $(1)
+	@$(MAKE) -s _release-one ID=$(1)
+endef
+$(foreach id,$(IDS),$(eval $(call RELEASE_RULE,$(id))))
+
+# Per-ID release helper. Decides once whether the remote version exists:
+# skip, or build then push. Probe errors are fail-closed. No probe in
+# local build-only mode (REMOTE_PREFIX empty).
+.PHONY: _release-one
+_release-one:
+	@skip=0; \
+	if [ "$(ALLOW_OVERWRITE)" != "true" ] && [ -n "$(REMOTE_PREFIX)" ]; then \
+		st="$$($(MAKE) -s _exists ID=$(ID))"; \
+		case "$$st" in \
+			yes) echo "SKIP: $(call remote_ref,$(ID)) already published"; skip=1;; \
+			error) exit 1;; \
+			no) ;; *) echo "ERROR: unexpected _exists result '$$st'" >&2; exit 1;; \
+		esac; \
+	fi; \
+	if [ "$$skip" = "0" ]; then \
+		docker build -f "$(call dockerfile_path,$(ID))" \
+			$(if $(call parent_of,$(ID)),--build-arg BASE_IMAGE="$(call parent_base,$(call parent_of,$(ID)))") \
+			$(call img_args,$(ID)) $(call oci_labels,$(ID)) -t "$(call artifact_ref,$(ID))" \
+			$(if $(and $(strip $(REMOTE_PREFIX)),$(filter true,$(PUSH_LATEST))),-t "$(call latest_ref,$(ID))") \
+			"$(BUILD_CONTEXT)"; \
+		docker push "$(call remote_ref,$(ID))"; \
+		if [ "$(PUSH_LATEST)" = "true" ]; then docker push "$(call latest_ref,$(ID))"; fi; \
+	fi
 
 # ============================================================
 # Save / load
@@ -261,9 +325,7 @@ clean: ## Remove built images
 .PHONY: _clean-one
 _clean-one:
 	@refs="$(call artifact_ref,$(ID))"; \
-	if [ -n "$(REMOTE_PREFIX)" ]; then \
-		refs="$$refs $(call latest_ref,$(ID))"; \
-	fi; \
+	if [ -n "$(REMOTE_PREFIX)" ]; then refs="$$refs $(call latest_ref,$(ID))"; fi; \
 	for ref in $$refs; do docker rmi -f "$$ref" 2>/dev/null || true; done
 
 .PHONY: clean-dist
