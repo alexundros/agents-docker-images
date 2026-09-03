@@ -12,6 +12,7 @@ ARG JAVA8_VER=8.0.504+1-tem
 ARG JAVA11_VER=11.0.32+1.1-tem
 ARG JAVA17_VER=17.0.20-tem
 ARG JAVA21_VER=21.0.12+1.1-tem
+ARG JAVA26_VER=26.0.2+1.1-tem
 ARG JAVA_DEFAULT=21.0.12+1.1-tem
 
 # GraalVM (Oracle, based on JDK 21)
@@ -29,6 +30,7 @@ RUN set -eux; \
   sdk install java "${JAVA11_VER}" < /dev/null; \
   sdk install java "${JAVA17_VER}" < /dev/null; \
   sdk install java "${JAVA21_VER}" < /dev/null; \
+  sdk install java "${JAVA26_VER}" < /dev/null; \
   sdk install java "${GRAALVM_VER}" < /dev/null; \
   sdk default java "${JAVA_DEFAULT}"; \
   sdk install maven "${MAVEN_VER}" < /dev/null; \

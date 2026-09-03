@@ -1,5 +1,5 @@
 
-DOCKERFILE=default/java/e0/Dockerfile
+DOCKERFILE=default/java/e1/Dockerfile
 PARENT=extra/go-rust-zig/0.1
 
 # JDK versions (Temurin identifiers)
@@ -7,6 +7,7 @@ ARG_JAVA8_VER=8.0.504+1-tem
 ARG_JAVA11_VER=11.0.32+1.1-tem
 ARG_JAVA17_VER=17.0.20-tem
 ARG_JAVA21_VER=21.0.12+1.1-tem
+ARG_JAVA26_VER=26.0.2+1.1-tem
 ARG_JAVA_DEFAULT=21.0.12+1.1-tem
 
 # GraalVM (Oracle, based on JDK 21)
