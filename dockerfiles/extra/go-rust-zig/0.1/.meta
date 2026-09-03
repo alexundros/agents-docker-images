@@ -1,5 +1,5 @@
 
-DOCKERFILE=default/rust-zig/v0/Dockerfile
+DOCKERFILE=default/rust-zig/0.1/Dockerfile
 PARENT=extra/go-rust/v0
 
 # Toolchain versions

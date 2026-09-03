@@ -1,6 +1,6 @@
 
 DOCKERFILE=default/java/v0/Dockerfile
-PARENT=extra/go-rust-zig/v0
+PARENT=extra/go-rust-zig/0.1
 
 # JDK versions (Temurin identifiers)
 ARG_JAVA8_VER=8.0.504+1-tem
