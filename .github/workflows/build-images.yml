@@ -77,6 +77,10 @@ jobs:
           base="${{ github.event.before }}"
           if [ "$base" = "0000000000000000000000000000000000000000" ]; then
             changed=("${all[@]}")
+          elif ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            echo "ERROR: base commit $base is not reachable (history was rewritten by force-push/rebase)." >&2
+            echo "       Re-run this workflow manually (workflow_dispatch) to build all." >&2
+            exit 1
           else
             changed=()
             while read -r f; do
@@ -89,7 +93,9 @@ jobs:
             done < <(git diff --name-only "$base" "${{ github.sha }}" -- dockerfiles/)
           fi
           declare -A want parent
-          for id in "${changed[@]}"; do in_all "$id" && want["$id"]=1; done
+          declare -a want_list=()
+          add_want() { want["$1"]=1; want_list+=("$1"); }
+          for id in "${changed[@]}"; do if in_all "$id"; then add_want "$id"; fi; done
           while read -r id p; do parent["$id"]="$p"; done < <(bash ./maketool.sh parents)
           progress=1
           while [ "$progress" = "1" ]; do
@@ -97,13 +103,13 @@ jobs:
             for id in "${all[@]}"; do
               p="${parent[$id]:-}"
               if [ -n "$p" ] && [ -n "${want[$p]:-}" ] && [ -z "${want[$id]:-}" ]; then
-                want["$id"]=1
+                add_want "$id"
                 progress=1
               fi
             done
           done
-          if [ "${#want[@]}" -gt 0 ]; then
-            ids="$(printf '%s\n' "${!want[@]}" | sort -u | paste -sd, -)"
+          if [ "${#want_list[@]}" -gt 0 ]; then
+            ids="$(printf '%s\n' "${want_list[@]}" | sort -u | paste -sd, -)"
             echo "Changed images: $(tr ',' ' ' <<< "$ids")"
           else
             ids=""
