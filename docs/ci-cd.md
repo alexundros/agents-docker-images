@@ -1,6 +1,6 @@
 # CI/CD (GitHub Actions)
 
-> The automated build-and-publish lifecycle. For how the build system and Makefile work underneath, see [build-system.md](build-system.md); for what the images contain, see [image-contents.md](image-contents.md).
+> The automated build-and-publish lifecycle. For how the build system and `maketool.sh` work underneath, see [build-system.md](build-system.md); for what the images contain, see [image-contents.md](image-contents.md).
 
 Two workflows live under `.github/workflows/`:
 
@@ -42,19 +42,19 @@ Only meaningful on `push`; on manual runs the mode is `all` (everything is rebui
 
 For pushes the workflow:
 
-1. Lists every image ID (`make -s _ids`).
+1. Lists every image ID (`./maketool.sh ids`).
 2. Diffs `dockerfiles/` between the previous commit (`github.event.before`) and the pushed SHA (`git diff --name-only`), mapping each changed file to its image ID.
    - A fresh branch (all-zero `before` SHA) is treated as "everything changed".
-3. **Transitively closes over dependents** using `make -s _parents` (`<id> <parent>` lines): any image whose parent is in the wanted set is added too, iterated until stable. A change to `default/rust`, for example, pulls in `rust-zig`, `go-rust-zig`, `go-rust-zig-java` (0.1 and e1).
+3. **Transitively closes over dependents** using `./maketool.sh parents` (`<id> <parent>` lines): any image whose parent is in the wanted set is added too, iterated until stable. A change to `default/rust`, for example, pulls in `rust-zig`, `go-rust-zig`, `go-rust-zig-java` (0.1 and e1).
 4. Emits the sorted comma-separated ID list as the `ids` output.
 
 ### Step 3 — Validate
 
-`make validate` — layout sanity, duplicate names, `PARENT` references, Dockerfile existence.
+`./maketool.sh validate` — layout sanity, duplicate names, `PARENT` references, Dockerfile existence.
 
 ### Step 4 — Build (build-only)
 
-When `do_push != true`: builds the affected images with `make build-<id> ...` (or `make build` for mode `all`), passing OCI labels:
+When `do_push != true`: builds the affected images in one call with `./maketool.sh build <id> ...` (or `./maketool.sh build` for mode `all`), passing OCI labels:
 
 ```bash
 OCI_SOURCE="${{ github.server_url }}/${{ github.repository }}"
@@ -71,7 +71,7 @@ When `do_push == true`, logs in with `docker/login-action@v4`:
 
 ### Step 6 — Build & push
 
-When `do_push == true`: runs `make release-<id> ...` (changed mode) or `make release ...` (all mode) with:
+When `do_push == true`: runs `./maketool.sh release <id> ...` (changed mode) or `./maketool.sh release` (all mode) with:
 
 ```bash
 REGISTRY="${{ vars.REGISTRY }}"

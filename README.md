@@ -1,15 +1,18 @@
 # Agents Docker Images
 
-> Docker toolchain images for AI coding agents — batteries included, built by a data-driven Makefile and published via GitHub Actions.
+> Docker toolchain images for AI coding agents — batteries included, built by a data-driven `maketool.sh` and published via GitHub Actions.
 
-The project ships a set of layered, versioned Docker images (`base`, `Go`, `Rust`, `Rust+Zig`, `Java`) plus ready-made **combinations** (`extra/*`) such as a full Go + Rust + Zig + Java workspace. Every image is defined by a small `.meta` file — the single source of truth — and images are built, validated and published by `make`.
+The project ships a set of layered, versioned Docker images (`base`, `Go`, `Rust`, `Rust+Zig`, `Java`) plus ready-made **combinations** (`extra/*`) such as a full Go + Rust + Zig + Java workspace. Every image is defined by a small `.meta` file — the single source of truth — and images are built, validated and published by `./maketool.sh`.
 
 ---
 
 ## Highlights
 
-- **10 images, 1 command to build them all** — `make build` discovers every image from its `.meta` file.
-- **Dependency-aware builds** — `PARENT=` in `.meta` drives build ordering and `BASE_IMAGE` propagation.
+- **10 images, 1 command to build them all** — `./maketool.sh build` discovers every image from its `.meta` file.
+- **Dependency-aware builds** — `PARENT=` in `.meta` drives build ordering and `BASE_IMAGE` propagation; it accepts internal image ids (`<key>/<version>`) or any foreign docker ref (passed through verbatim).
+- **Bring your own images** — the build tool is self-contained; run it in any repo with its
+  own `dockerfiles/` tree straight from GitHub, no clone needed
+  (`bash <(curl -fsSL https://raw.githubusercontent.com/alexundros/agents-docker-images/main/maketool.sh) build`).
 - **Reuse instead of copy** — `DOCKERFILE=` in `.meta` lets an image reuse an existing Dockerfile (see `extra/*`).
 - **Idempotent publishing** — already-published tags are skipped via a registry manifest probe; overwrite only with `ALLOW_OVERWRITE=true`.
 - **Change-aware CI** — GitHub Actions builds and pushes only images affected by a commit (plus their transitive dependents).
@@ -53,7 +56,7 @@ graph TD
 ## Documentation
 
 - [**Image contents**](docs/image-contents.md) — detailed breakdown of every image and its versions (packages, toolchains, ENV, size optimizations, `extra/*` combinations).
-- [**Build system & Makefile**](docs/build-system.md) — how the build system works, the `.meta` reference, the full Makefile reference, and how to add a new image.
+- [**Build system**](docs/build-system.md) — how `maketool.sh` works, the `.meta` reference, the full command reference, and how to add a new image.
 - [**CI/CD (GitHub Actions)**](docs/ci-cd.md) — the `build-images` and `dump-contexts` workflows: triggers, change detection, and the build-and-publish pipeline.
 
 ---
