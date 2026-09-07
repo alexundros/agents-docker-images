@@ -25,7 +25,7 @@ Handles the full build-and-publish lifecycle.
 
 ### Job setup
 
-- `runs-on: ubuntu-latest`, `timeout-minutes: 15`.
+- `runs-on: ubuntu-latest`, `timeout-minutes: 30`.
 - Permissions: `contents: read`, `packages: write` (needed to push to GHCR).
 - `actions/checkout@v4` with `fetch-depth: 0` (full history is required to diff against the previous commit).
 
@@ -45,8 +45,9 @@ For pushes the workflow:
 1. Lists every image ID (`./maketool.sh ids`).
 2. Diffs `dockerfiles/` between the previous commit (`github.event.before`) and the pushed SHA (`git diff --name-only`), mapping each changed file to its image ID.
    - A fresh branch (all-zero `before` SHA) is treated as "everything changed".
+   - If `before` names a commit that is not in the repo (history rewritten by force-push/rebase), the step fails fast with an explicit error — re-run the workflow via `workflow_dispatch` (mode `all`) after such pushes.
 3. **Transitively closes over dependents** using `./maketool.sh parents` (`<id> <parent>` lines): any image whose parent is in the wanted set is added too, iterated until stable. A change to `default/rust`, for example, pulls in `rust-zig`, `go-rust`, `go-rust-zig` and all four `go-rust-zig-java` combinations.
-4. Emits the sorted comma-separated ID list as the `ids` output.
+4. Emits the sorted comma-separated ID list as the `ids` output (empty when no image was touched — the build/push steps then no-op).
 
 ### Step 3 — Validate
 
@@ -82,6 +83,12 @@ OCI_SOURCE=... OCI_REVISION="${{ github.sha }}"
 ```
 
 `release` probes the registry first (`docker manifest inspect`) and skips already-published tags, so existing versions are never overwritten unless `force_rebuild` is set.
+
+Both build steps pass `SUMMARY=/tmp/mt-summary.tsv` to `maketool.sh`.
+
+### Step 7 — Job summary
+
+Runs `if: always()`, so it renders even when a build/push failed. Converts `/tmp/mt-summary.tsv` into the GitHub **job summary**: a Markdown table (`Image | Result | Ref`) with one row per processed image plus a `N built / N pushed / N skipped / N failed` count line. If the steps never got to processing images (e.g. detection failure or nothing changed), it shows "No images processed".
 
 ---
 

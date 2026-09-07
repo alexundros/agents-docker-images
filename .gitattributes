@@ -1,0 +1,12 @@
+# Default: guess text files, store LF in the repo, check out LF.
+* text=auto eol=lf
+
+# Explicit safeguards for the files that MUST be LF.
+*.sh          text eol=lf
+*.bash        text eol=lf
+*.meta        text eol=lf
+Dockerfile    text eol=lf
+*.yml         text eol=lf
+*.yaml        text eol=lf
+*.txt         text eol=lf
+*.md          text eol=lf

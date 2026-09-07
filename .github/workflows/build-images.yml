@@ -130,10 +130,12 @@ jobs:
             [ -z "$ids" ] && { echo "Nothing to build"; exit 0; }
             mapfile -t list < <(tr ',' '\n' <<< "$ids")
             bash ./maketool.sh build "${list[@]}" \
+              SUMMARY=/tmp/mt-summary.tsv \
               OCI_SOURCE="${{ github.server_url }}/${{ github.repository }}" \
               OCI_REVISION="${{ github.sha }}"
           else
             bash ./maketool.sh build \
+              SUMMARY=/tmp/mt-summary.tsv \
               OCI_SOURCE="${{ github.server_url }}/${{ github.repository }}" \
               OCI_REVISION="${{ github.sha }}"
           fi
@@ -155,6 +157,7 @@ jobs:
             [ -z "$ids" ] && { echo "Nothing to push"; exit 0; }
             mapfile -t list < <(tr ',' '\n' <<< "$ids")
             bash ./maketool.sh release "${list[@]}" \
+              SUMMARY=/tmp/mt-summary.tsv \
               REGISTRY="${{ vars.REGISTRY }}" NAMESPACE="${{ github.repository }}" \
               PUSH_LATEST="${{ steps.vars.outputs.push_latest }}" \
               ALLOW_OVERWRITE="${{ steps.vars.outputs.force_rebuild }}" \
@@ -162,9 +165,31 @@ jobs:
               OCI_REVISION="${{ github.sha }}"
           else
             bash ./maketool.sh release \
+              SUMMARY=/tmp/mt-summary.tsv \
               REGISTRY="${{ vars.REGISTRY }}" NAMESPACE="${{ github.repository }}" \
               PUSH_LATEST="${{ steps.vars.outputs.push_latest }}" \
               ALLOW_OVERWRITE="${{ steps.vars.outputs.force_rebuild }}" \
               OCI_SOURCE="${{ github.server_url }}/${{ github.repository }}" \
               OCI_REVISION="${{ github.sha }}"
           fi
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## Image build results"
+            echo
+            f=/tmp/mt-summary.tsv
+            if [ -s "$f" ]; then
+              echo "| Image | Result | Ref |"
+              echo "| ----- | ------ | --- |"
+              while IFS=$'\t' read -r id st ref; do
+                echo "| \`$id\` | $st | \`$ref\` |"
+              done < "$f"
+              echo
+              awk -F'\t' '{c[$2]++} END{printf "%d built %d pushed %d skipped %d failed\n",
+                c["built"]+0, c["pushed"]+0, c["skipped"]+0, c["failed"]+0}' "$f"
+            else
+              echo "_No images processed._"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

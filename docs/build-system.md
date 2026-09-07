@@ -132,6 +132,7 @@ Run `./maketool.sh help` (or just `./maketool.sh`) for the full list.
 - **Dependency ordering** — `build`/`release` order the selected images by walking `PARENT` transitively (DFS, parents first) and abort on circular references.
 - **Parent image** — for an internal parent its ref is resolved per mode (remote or local tag) and passed to the Dockerfile as `--build-arg BASE_IMAGE=...`; for an external `PARENT` the value is passed verbatim. Dockerfiles declare it as `ARG BASE_IMAGE=scratch` / `ARG BASE_IMAGE=debian:12-slim`.
 - **Skips** — when remote refs are in use, `build`, `push` and `release` first probe the registry (`docker manifest inspect`). Already-published tags are skipped unless `ALLOW_OVERWRITE=true`; probe errors are fail-closed (with hinting messages for auth/TLS failures).
+- **Run summary** — with `SUMMARY=<path>` every processed image is appended to that file as a TSV line `<id>\t<status>\t<ref>`, where status is `built`, `pushed`, `skipped` (already published) or `failed` (recorded just before the fail-fast exit). Commands that touch images (`build`/`push`/`release` and their `<id>` forms) participate; `save`/`load`/`clean` do not. CI renders this into the GitHub job summary.
 - **Aggregates** — a `<key>` selector builds every version of that key; `build`/`release` accept multiple selectors in one call (e.g. `./maketool.sh build default/rust/stable extra/go-rust/1.27.1-stable`).
 
 ### Key variables
@@ -149,6 +150,7 @@ All variables are set via the environment or as trailing `VAR=value` arguments.
 | `DF_DIR`                           | `dockerfiles` | Directory containing image definitions                                              |
 | `BUILD_CONTEXT`                    | `.`           | Docker build context                                                                |
 | `REGISTRY_USER` / `REGISTRY_TOKEN` | —             | Credentials for `./maketool.sh login`                                               |
+| `SUMMARY`                          | —             | TSV file receiving `<id>\t<status>\t<ref>` lines from build/push/release            |
 
 ### Examples
 

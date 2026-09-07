@@ -20,10 +20,11 @@ shopt -s nullglob globstar
 : "${ALLOW_OVERWRITE:=false}"
 : "${REGISTRY_USER:=}"
 : "${REGISTRY_TOKEN:=}"
+: "${SUMMARY:=}"
 
 # accepted VAR=value names (word-boundary checked in parse_args)
 CONFIG_VARS=" DF_DIR BUILD_CONTEXT DIST_DIR IMAGE_PREFIX OCI_SOURCE OCI_REVISION \
-REGISTRY NAMESPACE PUSH_LATEST ALLOW_OVERWRITE REGISTRY_USER REGISTRY_TOKEN "
+REGISTRY NAMESPACE PUSH_LATEST ALLOW_OVERWRITE REGISTRY_USER REGISTRY_TOKEN SUMMARY "
 
 declare -a args=() IDS=() KEYS=() ORDER=() VISITED=() STACK=() SELECTED=()
 die() { echo "ERROR: $*" >&2; exit 1; }
@@ -182,10 +183,30 @@ do_build() {
 # anything else is a foreign docker ref, passed through verbatim.
 parent_base() { contains "$1" "${IDS[@]}" && artifact_ref "$1" || printf '%s' "$1"; }
 
-build_one() { skip_published "$1" && return 0; do_build "$1"; }
-push_only() { docker push "$(remote_ref "$1")"; [ "$PUSH_LATEST" != "true" ] || docker push "$(latest_ref "$1")"; }
-push_one()    { skip_published "$1" push && return 0; push_only "$1"; }
-release_one() { skip_published "$1" && return 0; do_build "$1"; push_only "$1"; }
+# machine-readable run log: "<id>\t<status>\t<ref>" appended to $SUMMARY
+record() { [ -n "$SUMMARY" ] || return 0; printf '%s\t%s\t%s\n' "$1" "$2" "${3:--}" >> "$SUMMARY"; }
+
+build_one() {
+  skip_published "$1" && { record "$1" skipped "$(remote_ref "$1")"; return 0; }
+  do_build "$1" || { record "$1" failed; exit 1; }
+  record "$1" built "$(artifact_ref "$1")"
+}
+# explicit || return: status must propagate even when errexit is off in the caller's || context
+push_only() {
+  docker push "$(remote_ref "$1")" || return 1
+  [ "$PUSH_LATEST" != "true" ] || docker push "$(latest_ref "$1")" || return 1
+}
+push_one() {
+  skip_published "$1" push && { record "$1" skipped "$(remote_ref "$1")"; return 0; }
+  push_only "$1" || { record "$1" failed; exit 1; }
+  record "$1" pushed "$(remote_ref "$1")"
+}
+release_one() {
+  skip_published "$1" && { record "$1" skipped "$(remote_ref "$1")"; return 0; }
+  do_build "$1" || { record "$1" failed; exit 1; }
+  push_only "$1" || { record "$1" failed; exit 1; }
+  record "$1" pushed "$(remote_ref "$1")"
+}
 
 # ---- commands ----
 cmd_help() {
@@ -217,7 +238,7 @@ Notes:
 
 Config (env or VAR=value): DF_DIR BUILD_CONTEXT DIST_DIR IMAGE_PREFIX
   OCI_SOURCE OCI_REVISION REGISTRY NAMESPACE PUSH_LATEST ALLOW_OVERWRITE
-  REGISTRY_USER REGISTRY_TOKEN
+  REGISTRY_USER REGISTRY_TOKEN SUMMARY
 EOF
 }
 
