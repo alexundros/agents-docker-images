@@ -10,12 +10,22 @@ set -euo pipefail
 shopt -s nullglob globstar
 
 # ---- config (env or VAR=value on the command line) ----
-: "${DF_DIR:=dockerfiles}"        : "${BUILD_CONTEXT:=.}"
-: "${DIST_DIR:=dist}"             : "${IMAGE_PREFIX:=}"
-: "${OCI_SOURCE:=}"               : "${OCI_REVISION:=local}"
-: "${REGISTRY:=}"                 : "${NAMESPACE:=}"
-: "${PUSH_LATEST:=false}"         : "${ALLOW_OVERWRITE:=false}"
-: "${REGISTRY_USER:=}"            : "${REGISTRY_TOKEN:=}"
+: "${DF_DIR:=dockerfiles}"
+: "${BUILD_CONTEXT:=.}"
+: "${DIST_DIR:=dist}"
+: "${IMAGE_PREFIX:=}"
+: "${OCI_SOURCE:=}"
+: "${OCI_REVISION:=local}"
+: "${REGISTRY:=}"
+: "${NAMESPACE:=}"
+: "${PUSH_LATEST:=false}"
+: "${ALLOW_OVERWRITE:=false}"
+: "${REGISTRY_USER:=}"
+: "${REGISTRY_TOKEN:=}"
+
+# accepted VAR=value names (word-boundary checked in parse_args)
+CONFIG_VARS=" DF_DIR BUILD_CONTEXT DIST_DIR IMAGE_PREFIX OCI_SOURCE OCI_REVISION \
+REGISTRY NAMESPACE PUSH_LATEST ALLOW_OVERWRITE REGISTRY_USER REGISTRY_TOKEN "
 
 declare -a args=() IDS=() KEYS=() ORDER=() VISITED=() STACK=() SELECTED=()
 die() { echo "ERROR: $*" >&2; exit 1; }
@@ -27,16 +37,14 @@ parse_args() {
     case "$a" in
       *=*)
         k="${a%%=*}"; v="${a#*=}"
-        case "$k" in
-          DF_DIR|BUILD_CONTEXT|DIST_DIR|IMAGE_PREFIX|OCI_SOURCE|OCI_REVISION|\
-          REGISTRY|NAMESPACE|PUSH_LATEST|ALLOW_OVERWRITE|REGISTRY_USER|REGISTRY_TOKEN)
-            export "$k=$v" ;;
+        case "$CONFIG_VARS" in
+          *" $k "*) export "$k=$v" ;;
           *) die "unknown variable '$k'" ;;
         esac ;;
       *) args+=("$a") ;;
     esac
   done
-  if [ "${#args[@]}" -gt 0 ]; then cmd="${args[0]}"; else cmd="help"; fi
+  cmd="${args[0]:-help}"
 }
 
 # ---- discovery (pure bash: globstar + insertion sort; no external tools) ----
@@ -59,7 +67,8 @@ discover() {
   [ "${#IDS[@]}" -gt 0 ] || echo "WARN: no images under '$DF_DIR'" >&2
   KEYS=()
   for id in "${IDS[@]}"; do
-    k="$(id_key "$id")"; contains "$k" "${KEYS[@]}" || KEYS+=("$k")
+    k="$(id_key "$id")"
+    contains "$k" "${KEYS[@]}" || KEYS+=("$k")
   done
 }
 
@@ -76,14 +85,13 @@ meta_get() { # id KEY -> scalar (first match, inline '#' and trailing ws removed
     | sed -E 's/[[:space:]]*(#.*)?$//' | head -n1
 }
 
-dockerfile_path() { local d; d="$(meta_get "$1" DOCKERFILE)"
-  [ -n "$d" ] && printf '%s' "$DF_DIR/$d" || printf '%s' "$DF_DIR/$1/Dockerfile"; }
-img_suffix() { local s; s="$(meta_get "$1" IMAGE)"; printf '%s' "${s:-$(id_name "$1")}"; }
-img_name()   { printf '%s%s' "$IMAGE_PREFIX" "$(img_suffix "$1")"; }
-local_ref()  { printf '%s/%s:%s' "$(basename "$PWD")" "$(img_name "$1")" "$(id_version "$1")"; }
-remote_ref() { printf '%s%s:%s' "$REMOTE_PREFIX" "$(img_name "$1")" "$(id_version "$1")"; }
-latest_ref() { printf '%s%s:latest' "$REMOTE_PREFIX" "$(img_name "$1")"; }
-artifact_ref() { [ -n "$REMOTE_PREFIX" ] && remote_ref "$1" || local_ref "$1"; }
+dockerfile_path() { local d; d="$(meta_get "$1" DOCKERFILE)"; printf '%s' "$DF_DIR/${d:-$1/Dockerfile}"; }
+img_suffix()      { local s; s="$(meta_get "$1" IMAGE)"; printf '%s' "${s:-$(id_name "$1")}"; }
+img_name()        { printf '%s%s' "$IMAGE_PREFIX" "$(img_suffix "$1")"; }
+local_ref()       { printf '%s/%s:%s' "$REPO" "$(img_name "$1")" "$(id_version "$1")"; }
+remote_ref()      { printf '%s%s:%s' "$REMOTE_PREFIX" "$(img_name "$1")" "$(id_version "$1")"; }
+latest_ref()      { printf '%s%s:latest' "$REMOTE_PREFIX" "$(img_name "$1")"; }
+artifact_ref()    { [ -n "$REMOTE_PREFIX" ] && remote_ref "$1" || local_ref "$1"; }
 
 img_args() { # ARG_* lines -> "--build-arg\nNAME=value" (one token per line)
   local mp; mp="$(meta_path "$1")"; [ -f "$mp" ] || return 0
@@ -108,21 +116,17 @@ visit() {
   contains "$id" "${VISITED[@]}" && return 0
   STACK+=("$id")
   p="$(parent_of "$id")"
-  if [ -n "$p" ]; then
-    contains "$p" "${IDS[@]}" || die "PARENT '$p' of '$id' is not a known image ID"
-    visit "$p"
-  fi
+  if [ -n "$p" ] && contains "$p" "${IDS[@]}"; then visit "$p"; fi
   STACK=("${STACK[@]:0:$(( ${#STACK[@]} - 1 ))}")
   VISITED+=("$id"); ORDER+=("$id")
 }
 ensure_selected() { # selectors... -> SELECTED (each is an id or a key)
-  local sel id; SELECTED=()
+  local sel id
+  SELECTED=()
   for sel in "$@"; do
-    if contains "$sel" "${IDS[@]}"; then SELECTED+=("$sel")
+    if   contains "$sel" "${IDS[@]}"; then SELECTED+=("$sel")
     elif contains "$sel" "${KEYS[@]}"; then
-      for id in "${IDS[@]}"; do
-        if [ "$(id_key "$id")" = "$sel" ]; then SELECTED+=("$id"); fi
-      done
+      for id in "${IDS[@]}"; do if [ "$(id_key "$id")" = "$sel" ]; then SELECTED+=("$id"); fi; done
     else die "unknown image/key '$sel'"; fi
   done
 }
@@ -130,7 +134,8 @@ ensure_selected() { # selectors... -> SELECTED (each is an id or a key)
 # ---- registry ----
 require_remote() {
   [ -n "$REMOTE_PREFIX" ] && return 0
-  echo "ERROR: set REGISTRY and NAMESPACE, e.g.: "; echo "  $0 push REGISTRY=ghcr.io NAMESPACE=acme"; exit 1
+  printf 'ERROR: set REGISTRY and NAMESPACE, e.g.:\n  %s push REGISTRY=ghcr.io NAMESPACE=acme\n' "$0"
+  exit 1
 }
 
 probe_exists() { # echoes yes|no|error; info on stderr
@@ -138,19 +143,15 @@ probe_exists() { # echoes yes|no|error; info on stderr
   [ -z "$REMOTE_PREFIX" ] && { echo no; return 0; }
   ref="$(remote_ref "$id")"
   out="$(docker manifest inspect "$ref" 2>&1)" || rc=$?
-  if [ "${rc:-0}" = "0" ]; then echo "FOUND: $ref already exists" >&2; echo yes
-  elif case "$out" in *"no such manifest"*|*"manifest unknown"*|*"not found"*|*"404"*) true ;; *) false ;; esac
-  then echo "OK:    $ref is free" >&2; echo no
-  else
-    case "$out" in
-      *"unauthorized"*|*"authentication required"*|*"denied"*|*"permission denied"*)
-        echo "ERROR: $ref - registry needs auth (run '$0 login' first)" >&2 ;;
-      *"certificate"*|*"x509"*|*"tls"*|*"unknown authority"*)
-        echo "ERROR: $ref - TLS check failed for docker CLI" >&2 ;;
-      *) echo "ERROR: $ref - manifest inspect failed: $out" >&2 ;;
-    esac
-    echo error
-  fi
+  if [ "${rc:-0}" = "0" ]; then echo "FOUND: $ref already exists" >&2; echo yes; return 0; fi
+  case "$out" in
+    *"no such manifest"*|*"manifest unknown"*|*"not found"*|*"404"*) echo "OK: $ref is free" >&2; echo no ;;
+    *"unauthorized"*|*"authentication required"*|*"denied"*|*"permission denied"*)
+      echo "ERROR: $ref - registry needs auth (run '$0 login' first)" >&2; echo error ;;
+    *"certificate"*|*"x509"*|*"tls"*|*"unknown authority"*)
+      echo "ERROR: $ref - TLS check failed for docker CLI" >&2; echo error ;;
+    *) echo "ERROR: $ref - manifest inspect failed: $out" >&2; echo error ;;
+  esac
 }
 
 # shared gate: true = skip this image (already published)
@@ -166,27 +167,25 @@ skip_published() { # id [label]
 
 # ---- build / push / release ----
 do_build() {
-  local id="$1" dfp p base
+  local id="$1" dfp p
   local -a bargs=() kargs=() labels=() tags=()
   dfp="$(dockerfile_path "$id")"
   mapfile -t kargs  < <(img_args "$id")
   mapfile -t labels < <(oci_labels "$id")
   tags=(-t "$(artifact_ref "$id")")
-  [ -z "$REMOTE_PREFIX" ] || [ "$PUSH_LATEST" != "true" ] || tags+=(-t "$(latest_ref "$id")")
+  if [ -n "$REMOTE_PREFIX" ] && [ "$PUSH_LATEST" = "true" ]; then tags+=(-t "$(latest_ref "$id")"); fi
   p="$(parent_of "$id")"
   bargs=(-f "$dfp")
   [ -z "$p" ] || bargs+=(--build-arg "BASE_IMAGE=$(parent_base "$p")")
-  docker build "${bargs[@]}" ${kargs[@]+"${kargs[@]}"} ${labels[@]+"${labels[@]}"} "${tags[@]}" "$BUILD_CONTEXT"
+  docker build "${bargs[@]}" \
+    ${kargs[@]+"${kargs[@]}"} ${labels[@]+"${labels[@]}"} "${tags[@]}" "$BUILD_CONTEXT"
 }
-parent_base() { # parent id -> BASE_IMAGE ref (remote when registry set, else local)
-  if [ -n "$REMOTE_PREFIX" ]; then remote_ref "$1"; else local_ref "$1"; fi
-}
+# PARENT -> BASE_IMAGE: internal id becomes its ref (remote/local by mode);
+# anything else is a foreign docker ref, passed through verbatim.
+parent_base() { contains "$1" "${IDS[@]}" && artifact_ref "$1" || printf '%s' "$1"; }
 
 build_one() { skip_published "$1" && return 0; do_build "$1"; }
-push_only() {
-  docker push "$(remote_ref "$1")"
-  [ "$PUSH_LATEST" != "true" ] || docker push "$(latest_ref "$1")"
-}
+push_only() { docker push "$(remote_ref "$1")"; [ "$PUSH_LATEST" != "true" ] || docker push "$(latest_ref "$1")"; }
 push_one()    { skip_published "$1" push && return 0; push_only "$1"; }
 release_one() { skip_published "$1" && return 0; do_build "$1"; push_only "$1"; }
 
@@ -214,6 +213,10 @@ Usage: $(basename "$0") <command> [selector ...] [VAR=value ...]
   exists <id>          Probe remote existence (prints yes|no|error)
   require-remote       Exit 1 unless REGISTRY and NAMESPACE are set
 
+Notes:
+  PARENT in .meta is either an internal <key>/<version> id (dependency edge, ref resolved by the tool)
+  or any foreign docker ref (alpine:3.19, ghcr.io/x/y:v1) passed to the Dockerfile as BASE_IMAGE verbatim.
+
 Config (env or VAR=value): DF_DIR BUILD_CONTEXT DIST_DIR IMAGE_PREFIX
   OCI_SOURCE OCI_REVISION REGISTRY NAMESPACE PUSH_LATEST ALLOW_OVERWRITE
   REGISTRY_USER REGISTRY_TOKEN
@@ -237,9 +240,14 @@ cmd_validate() {
     dfp="$(dockerfile_path "$id")"
     [ -f "$dfp" ] || { echo "ERROR: '$id' has no Dockerfile '$dfp' (set DOCKERFILE= in .meta)"; err=1; }
     p="$(parent_of "$id")"; [ -z "$p" ] && continue
-    case "$p" in */*) ;; *) echo "ERROR: PARENT='$p' in '$id/.meta' must be '<key>/<version>'"; err=1; continue ;; esac
-    pdfp="$(dockerfile_path "$p")"
-    [ -f "$pdfp" ] || { echo "ERROR: PARENT '$p' (from '$id') has no Dockerfile '$pdfp'"; err=1; }
+    if contains "$p" "${IDS[@]}"; then
+      pdfp="$(dockerfile_path "$p")"
+      [ -f "$pdfp" ] || { echo "ERROR: PARENT '$p' (from '$id') has no Dockerfile '$pdfp'"; err=1; }
+    elif case "$p" in *[[:space:]]*) true ;; *) false ;; esac; then
+      echo "ERROR: PARENT='$p' in '$id/.meta' contains whitespace"; err=1
+    elif case "$p" in */*) contains "${p%/*}" "${KEYS[@]}" ;; *) false ;; esac; then
+      echo "ERROR: PARENT='$p' in '$id/.meta' looks like an internal id but is unknown"; err=1
+    fi
   done
   if [ "$err" = "0" ]; then echo "validate: OK (${#IDS[@]} image(s))"; else exit 1; fi
 }
@@ -261,17 +269,14 @@ cmd_exists()     { probe_exists "${args[1]}"; }
 cmd_meta_get()   { printf '%s\n' "$(meta_get "${args[1]}" "${args[2]}")"; }
 
 build_seq() { # selectors... -> ORDER (no selectors = all images, validated)
-  if [ "$#" -eq 0 ]; then cmd_validate; topo "${IDS[@]}"
-  else ensure_selected "$@"; topo "${SELECTED[@]}"; fi
+  if [ "$#" -eq 0 ]; then cmd_validate; topo "${IDS[@]}"; else ensure_selected "$@"; topo "${SELECTED[@]}"; fi
 }
 cmd_build()   { local id; build_seq "$@"; for id in "${ORDER[@]}"; do build_one "$id"; done; }
 cmd_release() { local id; require_remote; build_seq "$@"; for id in "${ORDER[@]}"; do release_one "$id"; done; }
 cmd_push()    { local id; for id in "${IDS[@]}"; do push_one "$id"; done; }
 
-cmd_login() {
-  [ -n "$REGISTRY" ] || { echo "SKIP login: REGISTRY is not set"; return 0; }
-  echo "$REGISTRY_TOKEN" | docker login "$REGISTRY" -u "$REGISTRY_USER" --password-stdin
-}
+cmd_login() { [ -n "$REGISTRY" ] || { echo "SKIP login: REGISTRY is not set"; return 0; }
+  echo "$REGISTRY_TOKEN" | docker login "$REGISTRY" -u "$REGISTRY_USER" --password-stdin; }
 
 cmd_save() {
   local id ref out; mkdir -p "$DIST_DIR"
@@ -299,6 +304,7 @@ need_arg2() { [ -n "${args[2]:-}" ] || die "usage: $0 $1 <id> KEY"; }
 
 # ---- main ----
 parse_args "$@"
+REPO="$(basename "$PWD")"
 REMOTE_PREFIX=""
 if [ -n "$REGISTRY" ] && [ -n "$NAMESPACE" ]; then REMOTE_PREFIX="$REGISTRY/$NAMESPACE/"; fi
 
