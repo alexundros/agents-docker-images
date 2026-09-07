@@ -1,0 +1,11 @@
+
+DOCKERFILE=default/java/Dockerfile
+PARENT=extra/go-rust-zig/1.27.1-stable-0.14.0
+
+# JDK (Temurin identifiers)
+ARG_JAVA_VERS=17.0.20-tem
+ARG_JAVA_DEFAULT=17.0.20-tem
+
+# Build tools
+ARG_MAVEN_VER=3.9.16
+ARG_GRADLE_VER=9.7.1

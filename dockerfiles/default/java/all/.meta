@@ -1,0 +1,14 @@
+
+DOCKERFILE=default/java/Dockerfile
+PARENT=default/base/12
+
+# All JDKs (Temurin identifiers); default = 21
+ARG_JAVA_VERS=8.0.504+1-tem 11.0.32+1.1-tem 17.0.20-tem 21.0.12+1.1-tem 26.0.2+1.1-tem
+ARG_JAVA_DEFAULT=21.0.12+1.1-tem
+
+# GraalVM (Oracle, based on JDK 21)
+ARG_GRAALVM_VER=21.0.12-graal
+
+# Build tools
+ARG_MAVEN_VER=3.9.16
+ARG_GRADLE_VER=9.7.1

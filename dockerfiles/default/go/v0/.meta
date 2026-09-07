@@ -1,5 +1,0 @@
-
-PARENT=default/base/v0
-
-# Toolchain versions
-ARG_GO_VER=1.26.7

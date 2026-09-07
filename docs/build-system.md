@@ -11,10 +11,10 @@
 ./maketool.sh build
 
 # Run the Java-capable full stack image
-docker run --rm -it <image-prefix>/go-rust-zig-java:0.1
+docker run --rm -it <image-prefix>/go-rust-zig-java:1.27.1-stable-0.14.0-jdk21
 
 # Start a session in a Go image
-docker run --rm -it <image-prefix>/go:v0 bash
+docker run --rm -it <image-prefix>/go:1.27.1 bash
 ```
 
 Every image runs `info-banner.sh` by default, which prints the environment, installed tools, and system info on start.
@@ -33,9 +33,19 @@ dockerfiles/<namespace>/<key>/<version>/
 
 ### Discovery
 
-Images are **discovered from `.meta` files**. Every command walks `$DF_DIR` (`dockerfiles` by default) with bash globstar for any `.meta` at least two directories deep, producing image **IDs** of the form `<key>/<version>` (e.g. `extra/go-rust-zig-java/0.1`). IDs are sorted inside the script, so builds are deterministic.
+Images are **discovered from `.meta` files**. Every command walks `$DF_DIR` (`dockerfiles` by default) with bash globstar for any `.meta` at least two directories deep, producing image **IDs** of the form `<key>/<version>` (e.g. `extra/go-rust-zig-java/1.27.1-stable-0.14.0-jdk21`) - see [Version naming](#version-naming). IDs are sorted inside the script, so builds are deterministic.
 
 Everything downstream is derived from those IDs — build order, aggregates, push/save/load, and CI.
+
+### Version naming
+
+The version directory (and therefore the image tag) reflects the **actual toolchain version**:
+
+- `default/*` — version of the image's key component: `go/1.27.1`, `java/17`, `base/12` (Debian major), `rust/stable` (rolling channel — not pinned). Multi-tool defaults use a composite too: `rust-zig/stable-0.14.0` (`rust`-`zig`).
+- `extra/*` — **composite** version listing every component in a fixed order `go`-`rust`-`zig`-`jdk`:
+  `go-rust/1.27.1-stable`, `go-rust-zig/1.27.1-stable-0.14.0`, `go-rust-zig-java/1.27.1-stable-0.14.0-jdk21`.
+- Bumping a toolchain means adding a **new version directory** (and repointing `PARENT=` in dependents) — old versions stay immutable.
+- Versions may be shared by several keys' layouts: one key can have many versions (`java/8 ... java/all`), and one Dockerfile can back them all (see `DOCKERFILE=` below).
 
 ### `.meta` reference
 
@@ -122,7 +132,7 @@ Run `./maketool.sh help` (or just `./maketool.sh`) for the full list.
 - **Dependency ordering** — `build`/`release` order the selected images by walking `PARENT` transitively (DFS, parents first) and abort on circular references.
 - **Parent image** — for an internal parent its ref is resolved per mode (remote or local tag) and passed to the Dockerfile as `--build-arg BASE_IMAGE=...`; for an external `PARENT` the value is passed verbatim. Dockerfiles declare it as `ARG BASE_IMAGE=scratch` / `ARG BASE_IMAGE=debian:12-slim`.
 - **Skips** — when remote refs are in use, `build`, `push` and `release` first probe the registry (`docker manifest inspect`). Already-published tags are skipped unless `ALLOW_OVERWRITE=true`; probe errors are fail-closed (with hinting messages for auth/TLS failures).
-- **Aggregates** — a `<key>` selector builds every version of that key; `build`/`release` accept multiple selectors in one call (e.g. `./maketool.sh build default/rust extra/go-rust/v0`).
+- **Aggregates** — a `<key>` selector builds every version of that key; `build`/`release` accept multiple selectors in one call (e.g. `./maketool.sh build default/rust/stable extra/go-rust/1.27.1-stable`).
 
 ### Key variables
 
@@ -144,7 +154,7 @@ All variables are set via the environment or as trailing `VAR=value` arguments.
 
 ```bash
 # Local build of a single image
-./maketool.sh build extra/go-rust-zig-java/0.1
+./maketool.sh build extra/go-rust-zig-java/1.27.1-stable-0.14.0-jdk21
 
 # Build everything
 ./maketool.sh build
@@ -167,13 +177,14 @@ All variables are set via the environment or as trailing `VAR=value` arguments.
 1. Create `dockerfiles/<namespace>/<key>/<version>/.meta`:
 
    ```text
-   PARENT=default/base/v0
+   PARENT=default/base/12
 
    # Build args passed to the Dockerfile
-   ARG_GO_VER=1.26.7
+   ARG_GO_VER=1.27.1
    ```
 
-2. Add a `Dockerfile` next to it — **or** reuse an existing one by setting `DOCKERFILE=`.
+2. Add a `Dockerfile` next to it — **or** reuse an existing one by setting `DOCKERFILE=`
+   (it may live at the key level and be shared by all versions of the key, as `default/java` does).
 
 3. Verify and build:
 

@@ -4,7 +4,7 @@ FROM ${BASE_IMAGE}
 USER root
 
 # Go (official tarball, multi-arch)
-ARG GO_VER=1.26.7
+ARG GO_VER=1.27.1
 RUN set -eux; \
   arch="$(dpkg --print-architecture)"; \
   case "${arch}" in \

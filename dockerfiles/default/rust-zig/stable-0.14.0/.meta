@@ -1,5 +1,5 @@
 
-PARENT=default/rust/v0
+PARENT=default/rust/stable
 
 # Toolchain versions
 ARG_ZIG_VER=0.14.0

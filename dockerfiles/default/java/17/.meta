@@ -1,0 +1,11 @@
+
+DOCKERFILE=default/java/Dockerfile
+PARENT=default/base/12
+
+# JDK (Temurin identifier); default = the same single JDK
+ARG_JAVA_VERS=17.0.20-tem
+ARG_JAVA_DEFAULT=17.0.20-tem
+
+# Build tools
+ARG_MAVEN_VER=3.9.16
+ARG_GRADLE_VER=9.7.1

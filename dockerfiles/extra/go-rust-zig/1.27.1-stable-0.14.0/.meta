@@ -1,0 +1,7 @@
+
+DOCKERFILE=default/rust-zig/stable-0.14.0/Dockerfile
+PARENT=extra/go-rust/1.27.1-stable
+
+# Toolchain versions
+ARG_ZIG_VER=0.14.0
+ARG_ZIGBUILD_VER=0.23.3

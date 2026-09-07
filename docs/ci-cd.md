@@ -45,7 +45,7 @@ For pushes the workflow:
 1. Lists every image ID (`./maketool.sh ids`).
 2. Diffs `dockerfiles/` between the previous commit (`github.event.before`) and the pushed SHA (`git diff --name-only`), mapping each changed file to its image ID.
    - A fresh branch (all-zero `before` SHA) is treated as "everything changed".
-3. **Transitively closes over dependents** using `./maketool.sh parents` (`<id> <parent>` lines): any image whose parent is in the wanted set is added too, iterated until stable. A change to `default/rust`, for example, pulls in `rust-zig`, `go-rust-zig`, `go-rust-zig-java` (0.1 and e1).
+3. **Transitively closes over dependents** using `./maketool.sh parents` (`<id> <parent>` lines): any image whose parent is in the wanted set is added too, iterated until stable. A change to `default/rust`, for example, pulls in `rust-zig`, `go-rust`, `go-rust-zig` and all four `go-rust-zig-java` combinations.
 4. Emits the sorted comma-separated ID list as the `ids` output.
 
 ### Step 3 — Validate
