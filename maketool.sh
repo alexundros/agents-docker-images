@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
 # maketool.sh — pure-bash build/publish tool for docker images
-# (all logic of the old Makefile, no make, no findutils, no sort).
-# Requires bash >= 4. Works on MSYS2 (System32 shadows ignored).
 #
 # Usage: ./maketool.sh <command> [selector ...] [VAR=value ...]
 # ============================================================
