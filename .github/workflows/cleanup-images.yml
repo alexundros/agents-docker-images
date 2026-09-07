@@ -1,0 +1,154 @@
+name: cleanup-images
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Only report what would be deleted (no api delete calls)"
+        type: boolean
+        default: true
+      delete_untagged:
+        description: "Also delete untagged versions (dangling digests)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: cleanup-images
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Plan and execute cleanup
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          NAMESPACE: ${{ github.repository }}
+          KEEP_FILE: dockerfiles/keep-images.txt
+          DRY_RUN: ${{ inputs.dry_run }}
+          DELETE_UNTAGGED: ${{ inputs.delete_untagged }}
+        run: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+          DRY_RUN="${DRY_RUN:-true}"
+          DELETE_UNTAGGED="${DELETE_UNTAGGED:-true}"
+          # 1. parse keep file: name:tag (or name:*), '#' comments
+          declare -A KEEP_TAGS
+          keep_n=0
+          while IFS= read -r line || [ -n "$line" ]; do
+            line="${line%%#*}"; line="${line//[[:space:]]/}"
+            [ -n "$line" ] || continue
+            [ "${line#*:}" != "$line" ] || { echo "ERROR: bad keep line (no tag): $line" >&2; exit 1; }
+            pkg="${line%%:*}"; tag="${line#*:}"
+            [ -n "$pkg" ] && [ -n "$tag" ] || { echo "ERROR: bad keep line: $line" >&2; exit 1; }
+            KEEP_TAGS["$pkg"]="${KEEP_TAGS[$pkg]:-}$tag"$'\n'
+            keep_n=$((keep_n + 1))
+          done < "$KEEP_FILE"
+          [ "$keep_n" -gt 0 ] || { echo "ERROR: keep list is empty - refusing to clean" >&2; exit 1; }
+          tag_in_keep() { # pkg tag
+            local t
+            while IFS= read -r t; do
+              [ "$t" = "$2" ] || [ "$t" = "*" ] || continue
+              return 0
+            done <<< "${KEEP_TAGS[$1]:-}"
+            return 1
+          }
+          # 2. safety gate: every ref of the current tree must be keep-listed
+          mapfile -t TREE_REFS < <(bash ./maketool.sh remote-refs REGISTRY="${{ vars.REGISTRY }}" NAMESPACE="$NAMESPACE")
+          for ref in "${TREE_REFS[@]}"; do
+            short="${ref##*/}"; rpkg="${short%%:*}"; rtag="${short#*:}"
+            if ! tag_in_keep "$rpkg" "$rtag"; then
+              echo "ERROR: tree image $rpkg:$rtag is missing from $KEEP_FILE." \
+              "Cleanup would delete your current tags - update the keep file first." >&2
+              exit 1
+            fi
+          done
+          # GHCR package names include the repo segment: ghcr.io/owner/repo/base -> "repo/base" (slash %2F-encoded)
+          API_PREFIX="${NAMESPACE#"$OWNER"/}/"
+          api_name() { local n="$API_PREFIX$1"; printf '%s' "${n//\//%2F}"; }
+          # 3. resolve GHCR API scope (user vs org)
+          first_pkg="$(printf '%s\n' "${!KEEP_TAGS[@]}" | sort | head -1)"
+          BASE=""; probe_err=""
+          for scope in "users/$OWNER" "orgs/$OWNER"; do
+            if probe_err="$(gh api "/$scope/packages/container/$(api_name "$first_pkg")/versions?per_page=1" 2>&1 >/dev/null)"; then
+              BASE="$scope"; break
+            fi
+            echo "probe /$scope failed: ${probe_err%%$'\n'*}"
+          done
+          if [ -z "$BASE" ]; then
+            echo "ERROR: package '$API_PREFIX$first_pkg' not found under user/org $OWNER; last error: ${probe_err:-n/a}" >&2
+            exit 1
+          fi
+          echo "API scope: /$BASE"
+          # 4. build delete plan
+          PLAN_PKG=(); PLAN_ID=(); PLAN_DESC=(); plan_n=0
+          total=0; kept=0
+          for pkg in $(printf '%s\n' "${!KEEP_TAGS[@]}" | sort); do
+            if ! json="$(gh api --paginate "/$BASE/packages/container/$(api_name "$pkg")/versions?per_page=100" 2>/dev/null)"; then
+              echo "WARN: cannot list versions of $pkg (deleted package?) - skipping" >&2
+              continue
+            fi
+            while IFS=$'\t' read -r vid vname vtags; do
+              total=$((total + 1))
+              if [ -z "$vtags" ]; then
+                if [ "$DELETE_UNTAGGED" = "true" ]; then
+                  d="${vname#sha256:}"
+                  PLAN_PKG+=("$pkg"); PLAN_ID+=("$vid"); PLAN_DESC+=("<untagged> ${d:0:16}"); plan_n=${#PLAN_ID[@]}
+                else
+                  kept=$((kept + 1))
+                fi
+                continue
+              fi
+              all_gone=1
+              while IFS= read -r t; do
+                [ -n "$t" ] || continue
+                if tag_in_keep "$pkg" "$t"; then all_gone=0; break; fi
+              done <<< "${vtags//,/$'\n'}"
+              if [ "$all_gone" = 1 ]; then
+                d="${vname#sha256:}"
+                PLAN_PKG+=("$pkg"); PLAN_ID+=("$vid"); PLAN_DESC+=("$vtags ${d:0:12}"); plan_n=${#PLAN_ID[@]}
+              else
+                kept=$((kept + 1))
+              fi
+            done < <(printf '%s' "$json" | jq -r '.[] | [.id, .name, ((.metadata.container.tags // .tags // []) | join(","))] | @tsv')
+          done
+          echo "Versions scanned: $total; to delete: $plan_n; kept: $kept"
+          if [ "$total" -gt 0 ] && [ "$kept" -eq 0 ]; then
+            echo "ERROR: keep list matches nothing in the registry - refusing to delete everything" >&2
+            exit 1
+          fi
+          # 5. report (log + job summary)
+          {
+            echo "## Registry cleanup ($([ "$DRY_RUN" = "true" ] && echo "dry run" || echo "EXECUTING"))"
+            echo
+            echo "| Package | Version (tags / digest) | Action |"
+            echo '| ------- | ----------------------- | ------ |'
+            if [ "$plan_n" -eq 0 ]; then
+              echo "| - | nothing to delete | - |"
+            else
+              for ((i = 0; i < plan_n; i++)); do
+                echo "| \`${PLAN_PKG[$i]}\` | ${PLAN_DESC[$i]} | $([ "$DRY_RUN" = "true" ] && echo delete? || echo deleted) |"
+              done
+            fi
+            echo
+            echo "Scanned: $total, to delete: $plan_n, kept: $kept"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          # 6. execute
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "Dry run: no versions deleted. Re-run with dry_run=false to apply."
+            exit 0
+          fi
+          for ((i = 0; i < plan_n; i++)); do
+            echo "Deleting ${PLAN_PKG[$i]} id=${PLAN_ID[$i]} (${PLAN_DESC[$i]})"
+            gh api -X DELETE "/$BASE/packages/container/$(api_name "${PLAN_PKG[$i]}")/versions/${PLAN_ID[$i]}" \
+              || { echo "ERROR: delete failed. If GITHUB_TOKEN lacks permission, use a PAT secret" \
+                   "with delete:packages and switch the env GH_TOKEN above." >&2; exit 1; }
+          done
+          echo "Done: $plan_n version(s) deleted."

@@ -1,0 +1,35 @@
+# Images preserved by the "cleanup-images" workflow: <image>:<tag> (short GHCR name;
+# the <repo>/ API prefix is added by the workflow). "<image>:*" keeps a whole package,
+# '#' lines are comments, packages absent here are never touched.
+# (./maketool.sh remote-refs REGISTRY=... NAMESPACE=... | sed "s|.*/||").
+base:12
+base:latest
+go-rust-zig-java:1.26.7-stable-0.14.0-jdk11
+go-rust-zig-java:1.26.7-stable-0.14.0-jdk17
+go-rust-zig-java:1.26.7-stable-0.14.0-jdk21
+go-rust-zig-java:1.26.7-stable-0.14.0-jdkall
+go-rust-zig-java:1.27.1-stable-0.14.0-jdk11
+go-rust-zig-java:1.27.1-stable-0.14.0-jdk17
+go-rust-zig-java:1.27.1-stable-0.14.0-jdk21
+go-rust-zig-java:1.27.1-stable-0.14.0-jdkall
+go-rust-zig-java:latest
+go-rust-zig:1.26.7-stable-0.14.0
+go-rust-zig:1.27.1-stable-0.14.0
+go-rust-zig:latest
+go-rust:1.26.7-stable
+go-rust:1.27.1-stable
+go-rust:latest
+go:1.26.7
+go:1.27.1
+go:latest
+java:11
+java:17
+java:21
+java:26
+java:8
+java:all
+java:latest
+rust-zig:stable-0.14.0
+rust-zig:latest
+rust:stable
+rust:latest

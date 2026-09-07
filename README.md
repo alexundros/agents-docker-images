@@ -66,7 +66,7 @@ graph TD
 
 - [**Image contents**](docs/image-contents.md) — index with a detailed page per image (`docs/images/`): packages, toolchains, ENV, size optimizations, `extra/*` combinations.
 - [**Build system**](docs/build-system.md) — how `maketool.sh` works, the `.meta` reference, version naming, the full command reference, and how to add a new image.
-- [**CI/CD (GitHub Actions)**](docs/ci-cd.md) — the `build-images` and `dump-contexts` workflows: triggers, change detection, and the build-and-publish pipeline.
+- [**CI/CD (GitHub Actions)**](docs/ci-cd.md) — the `build-images`, `cleanup-images` and `dump-contexts` workflows: triggers, change detection, keep-list-based registry cleanup, and the build-and-publish pipeline.
 
 ---
 

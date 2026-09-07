@@ -125,6 +125,7 @@ Run `./maketool.sh help` (or just `./maketool.sh`) for the full list.
 | `./maketool.sh save` / `load`                                        | Export/import images to/from `dist/*.tar.gz`                       |
 | `./maketool.sh clean` / `clean-dist`                                 | Remove built images / the `dist/` directory                        |
 | `./maketool.sh img-suffix\|parent-of\|dockerfile\|remote-ref <id>`   | Introspection helpers for CI                                       |
+| `./maketool.sh remote-refs`                                          | Remote refs of every tree image (needs `REGISTRY` + `NAMESPACE`)   |
 | `./maketool.sh meta-get <id> KEY` / `exists <id>` / `require-remote` | Low-level helpers                                                  |
 
 ### Build behaviour

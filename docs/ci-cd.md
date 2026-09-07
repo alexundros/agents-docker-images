@@ -2,12 +2,13 @@
 
 > The automated build-and-publish lifecycle. For how the build system and `maketool.sh` work underneath, see [build-system.md](build-system.md); for what the images contain, see [image-contents.md](image-contents.md).
 
-Two workflows live under `.github/workflows/`:
+Three workflows live under `.github/workflows/`:
 
-| Workflow        | File                | Purpose                                                |
-| --------------- | ------------------- | ------------------------------------------------------ |
-| `build-images`  | `build-images.yml`  | Build and publish images (change-aware, idempotent)    |
-| `dump-contexts` | `dump-contexts.yml` | Debug helper: dumps the full GitHub/runner environment |
+| Workflow         | File                 | Purpose                                                         |
+| ---------------- | -------------------- | --------------------------------------------------------------- |
+| `build-images`   | `build-images.yml`   | Build and publish images (change-aware, idempotent)             |
+| `cleanup-images` | `cleanup-images.yml` | Manual GHCR cleanup: deletes versions absent from the keep list |
+| `dump-contexts`  | `dump-contexts.yml`  | Debug helper: dumps the full GitHub/runner environment          |
 
 ---
 
@@ -89,6 +90,49 @@ Both build steps pass `SUMMARY=/tmp/mt-summary.tsv` to `maketool.sh`.
 ### Step 7 — Job summary
 
 Runs `if: always()`, so it renders even when a build/push failed. Converts `/tmp/mt-summary.tsv` into the GitHub **job summary**: a Markdown table (`Image | Result | Ref`) with one row per processed image plus a `N built / N pushed / N skipped / N failed` count line. If the steps never got to processing images (e.g. detection failure or nothing changed), it shows "No images processed".
+
+---
+
+## `cleanup-images`
+
+Manual-only (`workflow_dispatch`) GHCR housekeeping: removes package versions that are no longer
+part of the kept set — stale tags (renamed/old versions) and, optionally, untagged versions
+(dangling digests left by force rebuilds).
+
+### Keep list
+
+`dockerfiles/keep-images.txt` — one `<package>:<tag>` per line (registry/namespace prefix omitted),
+`#` comments allowed, `<package>:*` keeps an entire package. Only packages mentioned in the file are
+scanned; everything else in the namespace is left alone.
+
+### Inputs
+
+| Input             | Default | Meaning                                             |
+| ----------------- | ------- | --------------------------------------------------- |
+| `dry_run`         | `true`  | Print the plan into the job summary, delete nothing |
+| `delete_untagged` | `true`  | Also delete versions that carry no tags             |
+
+### Behaviour
+
+1. Parses the keep file; refuses to run on an empty or malformed list.
+2. **Safety gate**: every ref produced by `./maketool.sh remote-refs` (the current tree) must appear
+   in the keep file — otherwise the workflow aborts, so forgotten keep updates can't delete live tags.
+3. Resolves the GHCR API scope (`/users/<owner>` vs `/orgs/<owner>`) by probing the first package.
+   Note: images pushed as `ghcr.io/<owner>/<repo>/<image>` are named `<repo>/<image>` in the API
+   (the slash is `%2F`-encoded); the keep file uses the short `<image>` part, the workflow adds the prefix.
+4. Lists all versions of each kept package (`gh api .../packages/container/<pkg>/versions --paginate`)
+   and marks versions whose tags are all absent from the keep set (untagged ones per input).
+   A version with *any* kept tag survives (tags share one version id).
+5. Renders the plan as a table in the job summary (`Package | Version | Action`) with
+   scanned/deleted/kept counters, then executes `DELETE` for each planned version unless `dry_run`.
+6. Refuses to proceed if the keep list matches nothing in the registry (mass-deletion guard).
+
+Uses the workflow's `GITHUB_TOKEN` (`packages: write`). If GitHub rejects the deletes (e.g. versions
+owned by another principal), store a PAT with `delete:packages` in a secret and pass it as `GH_TOKEN`.
+
+Typical flow after renaming a version: ship the new tags with `build-images`, add them to the keep
+file (remove the old lines), run `cleanup-images` with `dry_run=true`, eyeball the table, re-run with
+`dry_run=false`.
 
 ---
 

@@ -228,6 +228,7 @@ Usage: $(basename "$0") <command> [selector ...] [VAR=value ...]
   clean                Remove built images
   clean-dist           Remove \$DIST_DIR
   img-suffix <id> | parent-of <id> | dockerfile <id> | remote-ref <id>
+  remote-refs        Print remote refs of every image (needs REGISTRY+NAMESPACE)
   meta-get <id> KEY    Read a scalar from <id>/.meta
   exists <id>          Probe remote existence (prints yes|no|error)
   require-remote       Exit 1 unless REGISTRY and NAMESPACE are set
@@ -271,8 +272,8 @@ cmd_validate() {
   if [ "$err" = "0" ]; then echo "validate: OK (${#IDS[@]} image(s))"; else exit 1; fi
 }
 
-cmd_ids()     { local id; for id in "${IDS[@]}"; do printf '%s\n' "$id"; done; }
-cmd_parents() { local id; for id in "${IDS[@]}"; do printf '%s %s\n' "$id" "$(parent_of "$id")"; done; }
+cmd_ids()      { local id; for id in "${IDS[@]}"; do printf '%s\n' "$id"; done; }
+cmd_parents()  { local id; for id in "${IDS[@]}"; do printf '%s %s\n' "$id" "$(parent_of "$id")"; done; }
 describe_one() {
   local p dep; p="$(parent_of "$1")"; dep=""; [ -n "$p" ] && dep=" (parent: $p)"
   printf '  %-36s -> %s%s\n' "$1" "$(artifact_ref "$1")" "$dep"
@@ -280,12 +281,13 @@ describe_one() {
 cmd_images()   { local id; for id in "${IDS[@]}"; do describe_one "$id"; done; }
 cmd_describe() { describe_one "${args[1]}"; }
 
-cmd_img_suffix() { printf '%s\n' "$(img_suffix "${args[1]}")"; }
-cmd_parent_of()  { printf '%s\n' "$(parent_of "${args[1]}")"; }
-cmd_dockerfile() { printf '%s\n' "$(dockerfile_path "${args[1]}")"; }
-cmd_remote_ref() { printf '%s\n' "$(remote_ref "${args[1]}")"; }
-cmd_exists()     { probe_exists "${args[1]}"; }
-cmd_meta_get()   { printf '%s\n' "$(meta_get "${args[1]}" "${args[2]}")"; }
+cmd_img_suffix()  { printf '%s\n' "$(img_suffix "${args[1]}")"; }
+cmd_parent_of()   { printf '%s\n' "$(parent_of "${args[1]}")"; }
+cmd_dockerfile()  { printf '%s\n' "$(dockerfile_path "${args[1]}")"; }
+cmd_remote_ref()  { printf '%s\n' "$(remote_ref "${args[1]}")"; }
+cmd_remote_refs() { require_remote; local id; for id in "${IDS[@]}"; do printf '%s\n' "$(remote_ref "$id")"; done; }
+cmd_exists()      { probe_exists "${args[1]}"; }
+cmd_meta_get()    { printf '%s\n' "$(meta_get "${args[1]}" "${args[2]}")"; }
 
 build_seq() { # selectors... -> ORDER (no selectors = all images, validated)
   if [ "$#" -eq 0 ]; then cmd_validate; topo "${IDS[@]}"; else ensure_selected "$@"; topo "${SELECTED[@]}"; fi
@@ -338,6 +340,7 @@ case "$cmd" in
   parent-of)       need_arg parent-of; discover; cmd_parent_of ;;
   dockerfile)      need_arg dockerfile; discover; cmd_dockerfile ;;
   remote-ref)      need_arg remote-ref; discover; cmd_remote_ref ;;
+  remote-refs)     discover; cmd_remote_refs ;;
   meta-get)        need_arg meta-get; need_arg2 meta-get; discover; cmd_meta_get ;;
   exists)          need_arg exists; discover; cmd_exists ;;
   all|build)       discover; cmd_build "${args[@]:1}" ;;
